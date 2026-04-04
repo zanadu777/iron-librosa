@@ -18,6 +18,7 @@ mod spectrum_utils;
 mod chroma;
 mod tuning;
 mod phase_vocoder;
+mod cqt_vqt;
 
 /// The iron-librosa Rust extension module (`librosa._rust`).
 #[pymodule]
@@ -120,6 +121,12 @@ fn iron_librosa_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ----- phase_vocoder -----
     m.add_function(wrap_pyfunction!(phase_vocoder::phase_vocoder_f32, m)?)?;
     m.add_function(wrap_pyfunction!(phase_vocoder::phase_vocoder_f64, m)?)?;
+
+    // ----- cqt_vqt -----
+    m.add_function(wrap_pyfunction!(cqt_vqt::cqt_project_f32, m)?)?;
+    m.add_function(wrap_pyfunction!(cqt_vqt::cqt_project_f64, m)?)?;
+    m.add_function(wrap_pyfunction!(cqt_vqt::vqt_project_f32, m)?)?;
+    m.add_function(wrap_pyfunction!(cqt_vqt::vqt_project_f64, m)?)?;
 
     Ok(())
 }

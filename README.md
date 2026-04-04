@@ -64,11 +64,11 @@ of things that librosa can do.
 
 ## Project Status
 
-- **Current phase:** Phase 13 (CQT/VQT spike)
-- **Recent completion:** Rust `phase_vocoder` promoted to default dispatch
-- **Near-term objective:** integrate the first CQT/VQT Rust seam at `__cqt_response`
+- **Current phase:** Phase 13 complete (CQT/VQT seam integrated, opt-in)
+- **Recent completion:** Rust CQT/VQT dense projection seam implemented and parity-validated
+- **Near-term objective:** keep the seam benchmark-driven and promote only after a faster GEMM pass
 - **Project direction:** progressively expand Rust coverage across high-value analysis paths
-- **Tracking doc:** `Development_docs/PHASE13_CQT_VQT_SPIKE.md`
+- **Tracking doc:** `Development_docs/PHASE13_CQT_VQT_COMPLETION_REPORT.md`
 
 ---
 
@@ -78,7 +78,7 @@ of things that librosa can do.
 
 - **Current acceleration coverage:** ~70% of hot-path operations
 - **Implemented modules:** STFT/ISTFT, phase vocoder, mel, onset, tuning, chroma, spectral utilities
-- **Phase 13 target:** CQT/VQT acceleration and parity hardening
+- **Phase 13 target:** delivered as an opt-in CQT/VQT acceleration seam with parity hardening
 - **Coverage roadmap:** `Development_docs/LIBROSA_RUST_COVERAGE_ROADMAP.md`
 
 ---
@@ -102,6 +102,7 @@ Minimum checklist before a phase-end commit:
 
 ## Phase 13 References
 
+- Completion report: `Development_docs/PHASE13_CQT_VQT_COMPLETION_REPORT.md`
 - Spike plan: `Development_docs/PHASE13_CQT_VQT_SPIKE.md`
 - Next actions: `Development_docs/NEXT_ACTIONS_PHASE13_PLANNING.md`
 - Coverage quick reference: `Development_docs/RUST_COVERAGE_QUICK_REFERENCE.md`

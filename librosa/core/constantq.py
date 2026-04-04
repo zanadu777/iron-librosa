@@ -14,6 +14,12 @@ from .pitch import estimate_tuning
 from .._cache import cache
 from .. import filters
 from .. import util
+from .._rust_bridge import (
+    _rust_ext,
+    RUST_AVAILABLE,
+    FORCE_NUMPY_CQT_VQT,
+    FORCE_RUST_CQT_VQT,
+)
 from ..util.exceptions import ParameterError
 from numpy.typing import DTypeLike
 from typing import Optional, Union, Collection, List, Tuple, Dict, Any
@@ -1225,6 +1231,64 @@ def __trim_stack(
     return cqt_out
 
 
+def __cqt_response_rust_project(
+    Dr: np.ndarray, fft_basis: Any, *, phase: bool
+) -> Optional[np.ndarray]:
+    """Attempt Rust projection for compatible dense CQT/VQT response paths."""
+    if FORCE_NUMPY_CQT_VQT or not FORCE_RUST_CQT_VQT:
+        return None
+
+    if not RUST_AVAILABLE or _rust_ext is None:
+        return None
+
+    # Magnitude-only pseudo-CQT currently materializes complex buffers just to
+    # reuse the phase-preserving kernel, which regresses performance relative to
+    # the NumPy dense contraction. Keep the Rust path for complex CQT/VQT only.
+    if not phase:
+        return None
+
+    basis_array: Optional[np.ndarray] = None
+
+    if isinstance(fft_basis, np.ndarray):
+        basis_array = fft_basis
+    elif hasattr(fft_basis, "toarray"):
+        basis_size = int(np.prod(fft_basis.shape))
+        if basis_size <= 0:
+            return None
+
+        nnz = getattr(fft_basis, "nnz", basis_size)
+        density = float(nnz) / float(basis_size)
+
+        # Default CQT/VQT bases are only lightly sparsified; densify those to
+        # reuse the Rust dense-projection kernel. Keep truly sparse cases on the
+        # scipy path to avoid unnecessary memory amplification.
+        if density >= 0.25:
+            basis_array = np.asarray(fft_basis.toarray())
+
+    if basis_array is None or basis_array.ndim != 2 or basis_array.shape[1] != Dr.shape[1]:
+        return None
+
+    rust_dtype: DTypeLike
+
+    if Dr.dtype == np.complex64:
+        rust_dtype = np.complex64
+        rust_project = getattr(_rust_ext, "cqt_project_f32", None)
+    elif Dr.dtype == np.complex128:
+        rust_dtype = np.complex128
+        rust_project = getattr(_rust_ext, "cqt_project_f64", None)
+    else:
+        return None
+
+    if rust_project is None:
+        return None
+
+    Dr_c = np.ascontiguousarray(Dr, dtype=rust_dtype)
+    basis_c = np.ascontiguousarray(basis_array, dtype=rust_dtype)
+    output_flat = rust_project(Dr_c, basis_c)
+
+    return output_flat
+
+
 def __cqt_response(
     y, n_fft, hop_length, fft_basis, mode, window="ones", phase=True, dtype=None
 ):
@@ -1240,9 +1304,13 @@ def __cqt_response(
     # Reshape D to Dr
     Dr = D.reshape((-1, D.shape[-2], D.shape[-1]))
 
+    output_flat = __cqt_response_rust_project(Dr, fft_basis, phase=phase)
+
     # Dense basis can be projected in one batched contraction to reduce
     # Python loop overhead. Keep a fallback for sparse/custom basis objects.
-    if isinstance(fft_basis, np.ndarray):
+    if output_flat is not None:
+        pass
+    elif isinstance(fft_basis, np.ndarray):
         output_flat = np.tensordot(fft_basis, Dr, axes=(1, 1))
         output_flat = np.moveaxis(output_flat, 0, 1)
     else:

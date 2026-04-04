@@ -31,16 +31,23 @@ strict parity with Python reference outputs.
 1. **M1: Baseline lock (DONE)**
    - Benchmark script emits reproducible machine-readable output
    - Reference parity tests deterministic
-2. **M2: First Rust kernel path**
+2. **M2: First Rust kernel path (DONE)**
    - Add `src/cqt_vqt.rs` with f32/f64 projection kernels
    - Register symbols in `src/lib.rs`
-3. **M3: Python dispatch integration**
+3. **M3: Python dispatch integration (DONE)**
    - Wire dispatch in `librosa/core/constantq.py` for compatible dtypes/shapes
-4. **M4: Parity hardening**
+4. **M4: Parity hardening (DONE)**
    - Add strict allclose thresholds and multichannel coverage
-5. **M5: Promotion decision**
+5. **M5: Promotion decision (DECIDED: keep opt-in)**
    - Benchmark speedup >= 1.2x on medium workloads
    - No parity regressions in `tests/test_constantq.py`
+
+## Final Status
+- Rust dense projection seam implemented and validated.
+- Parity and regression suites pass.
+- Backend comparison benchmark captured in `Benchmarks/results/phase13_cqt_vqt_baseline.json`.
+- Default promotion deferred: benchmark gains were near parity / mixed on the validation machine.
+- Runtime policy: use `IRON_LIBROSA_CQT_VQT_BACKEND=rust` to opt in while further optimization work is pending.
 
 ## Validation commands
 ```powershell

@@ -33,14 +33,14 @@ from __future__ import annotations
 
 import os
 
-try:
-    from librosa import _rust as _rust_ext  # type: ignore[attr-defined]
-
-    RUST_AVAILABLE: bool = True
-except ImportError:
-    _rust_ext = None  # type: ignore[assignment]
-    RUST_AVAILABLE = False
-
+__all__ = [
+    "_rust_ext",
+    "RUST_AVAILABLE",
+    "FORCE_NUMPY_MEL",
+    "FORCE_RUST_MEL",
+    "FORCE_NUMPY_CQT_VQT",
+    "FORCE_RUST_CQT_VQT",
+]
 
 # Mel backend policy override for librosa.feature.melspectrogram 2D path.
 # Accepted values: "auto" (default), "numpy", "rust".
@@ -51,3 +51,19 @@ if _mel_backend not in {"auto", "numpy", "rust"}:
 FORCE_NUMPY_MEL: bool = _mel_backend == "numpy"
 FORCE_RUST_MEL: bool = _mel_backend == "rust"
 
+# Phase 13 CQT/VQT backend policy. This seam remains opt-in until benchmark
+# evidence is strong enough to justify default promotion.
+# Accepted values: "auto" (default, keep NumPy path), "numpy", "rust".
+_cqt_vqt_backend = os.getenv("IRON_LIBROSA_CQT_VQT_BACKEND", "auto").strip().lower()
+if _cqt_vqt_backend not in {"auto", "numpy", "rust"}:
+    _cqt_vqt_backend = "auto"
+
+FORCE_NUMPY_CQT_VQT: bool = _cqt_vqt_backend == "numpy"
+FORCE_RUST_CQT_VQT: bool = _cqt_vqt_backend == "rust"
+
+try:
+    from librosa import _rust as _rust_ext  # type: ignore[attr-defined]
+except ImportError:
+    _rust_ext = None
+
+RUST_AVAILABLE: bool = _rust_ext is not None

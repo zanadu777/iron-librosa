@@ -30,6 +30,32 @@ def _timeit(fn, repeats=3):
     return out, float(np.mean(times)), float(np.min(times))
 
 
+def _has_rust_backend() -> bool:
+    return bool(cqt_mod.RUST_AVAILABLE and getattr(cqt_mod, "_rust_ext", None) is not None)
+
+
+@contextmanager
+def _rust_backend_enabled(enabled: bool):
+    original = cqt_mod.RUST_AVAILABLE
+    original_force_numpy = cqt_mod.FORCE_NUMPY_CQT_VQT
+    original_force_rust = cqt_mod.FORCE_RUST_CQT_VQT
+    try:
+        cqt_mod.FORCE_NUMPY_CQT_VQT = not enabled
+        cqt_mod.FORCE_RUST_CQT_VQT = bool(enabled and _has_rust_backend())
+        cqt_mod.RUST_AVAILABLE = bool(enabled and _has_rust_backend())
+        yield
+    finally:
+        cqt_mod.FORCE_NUMPY_CQT_VQT = original_force_numpy
+        cqt_mod.FORCE_RUST_CQT_VQT = original_force_rust
+        cqt_mod.RUST_AVAILABLE = original
+
+
+def _time_backend(fn, repeats: int, *, use_rust: bool):
+    cqt_mod._vqt_filter_fft_cache_clear()
+    with _rust_backend_enabled(use_rust):
+        return _timeit(fn, repeats=repeats)
+
+
 @dataclass
 class _StageStat:
     total_ms: float = 0.0
@@ -143,35 +169,67 @@ def _stereo(y: np.ndarray) -> np.ndarray:
 
 
 def _bench_case(name: str, y: np.ndarray, repeats: int) -> Dict[str, Any]:
-    # Warm up caches/JIT before timed measurements.
-    librosa.cqt(y=y, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12)
-    librosa.vqt(y=y, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12)
+    rust_ready = _has_rust_backend()
 
-    cqt_out, cqt_avg, cqt_min = _timeit(
-        lambda: librosa.cqt(y=y, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12),
-        repeats=repeats,
-    )
-    print(
-        f"cqt  {name:<12} shape={cqt_out.shape!s:<16} avg={cqt_avg:8.3f} ms min={cqt_min:8.3f} ms"
-    )
+    def _format_summary(label: str, shape, rust_avg, rust_min, py_avg, py_min):
+        if py_avg is None or py_min is None:
+            print(
+                f"{label}  {name:<12} shape={shape!s:<16} avg={rust_avg:8.3f} ms min={rust_min:8.3f} ms"
+            )
+            return
 
-    vqt_out, vqt_avg, vqt_min = _timeit(
-        lambda: librosa.vqt(y=y, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12),
-        repeats=repeats,
-    )
-    print(
-        f"vqt  {name:<12} shape={vqt_out.shape!s:<16} avg={vqt_avg:8.3f} ms min={vqt_min:8.3f} ms"
-    )
+        print(
+            f"{label}  {name:<12} shape={shape!s:<16} "
+            f"rust avg/min={rust_avg:8.3f}/{rust_min:8.3f} ms  "
+            f"py avg/min={py_avg:8.3f}/{py_min:8.3f} ms  "
+            f"speedup avg/min={py_avg / rust_avg:5.3f}x/{py_min / rust_min:5.3f}x"
+        )
 
-    return {
+    cqt_fn = lambda: librosa.cqt(y=y, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12)
+    vqt_fn = lambda: librosa.vqt(y=y, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12)
+
+    cqt_out, cqt_avg, cqt_min = _time_backend(cqt_fn, repeats, use_rust=rust_ready)
+    cqt_py_avg = cqt_py_min = None
+    if rust_ready:
+        cqt_py_out, cqt_py_avg, cqt_py_min = _time_backend(cqt_fn, repeats, use_rust=False)
+        if cqt_out.shape != cqt_py_out.shape:
+            raise RuntimeError(f"CQT backend shape mismatch for {name}: {cqt_out.shape} vs {cqt_py_out.shape}")
+    _format_summary("cqt", cqt_out.shape, cqt_avg, cqt_min, cqt_py_avg, cqt_py_min)
+
+    vqt_out, vqt_avg, vqt_min = _time_backend(vqt_fn, repeats, use_rust=rust_ready)
+    vqt_py_avg = vqt_py_min = None
+    if rust_ready:
+        vqt_py_out, vqt_py_avg, vqt_py_min = _time_backend(vqt_fn, repeats, use_rust=False)
+        if vqt_out.shape != vqt_py_out.shape:
+            raise RuntimeError(f"VQT backend shape mismatch for {name}: {vqt_out.shape} vs {vqt_py_out.shape}")
+    _format_summary("vqt", vqt_out.shape, vqt_avg, vqt_min, vqt_py_avg, vqt_py_min)
+
+    result = {
         "name": name,
         "shape_cqt": list(cqt_out.shape),
         "shape_vqt": list(vqt_out.shape),
+        "rust_available": rust_ready,
         "cqt_avg_ms": cqt_avg,
         "cqt_min_ms": cqt_min,
         "vqt_avg_ms": vqt_avg,
         "vqt_min_ms": vqt_min,
     }
+
+    if rust_ready:
+        result.update(
+            {
+                "cqt_py_avg_ms": cqt_py_avg,
+                "cqt_py_min_ms": cqt_py_min,
+                "cqt_avg_speedup": cqt_py_avg / cqt_avg,
+                "cqt_min_speedup": cqt_py_min / cqt_min,
+                "vqt_py_avg_ms": vqt_py_avg,
+                "vqt_py_min_ms": vqt_py_min,
+                "vqt_avg_speedup": vqt_py_avg / vqt_avg,
+                "vqt_min_speedup": vqt_py_min / vqt_min,
+            }
+        )
+
+    return result
 
 
 def _parse_args() -> argparse.Namespace:
@@ -202,7 +260,7 @@ def main() -> None:
     args = _parse_args()
 
     print("=" * 72)
-    print("Phase 12 CQT/VQT benchmark")
+    print("Phase 13 CQT/VQT benchmark")
     print("=" * 72)
 
     case_results: List[Dict[str, Any]] = []
@@ -216,35 +274,37 @@ def main() -> None:
     print("-" * 72)
     y_ref = _signal(seconds=30, seed=7030)
 
-    # Warm once before collecting stage timings.
-    librosa.cqt(y=y_ref, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12)
-    librosa.vqt(y=y_ref, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12)
-
     stage_profiles: List[Dict[str, Any]] = []
-    stage_profiles.append(
-        _profile_transform(
-            "cqt",
-            lambda: librosa.cqt(y=y_ref, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12),
+    with _rust_backend_enabled(_has_rust_backend()):
+        # Warm once before collecting stage timings.
+        librosa.cqt(y=y_ref, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12)
+        librosa.vqt(y=y_ref, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12)
+
+        stage_profiles.append(
+            _profile_transform(
+                "cqt",
+                lambda: librosa.cqt(y=y_ref, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12),
+            )
         )
-    )
-    stage_profiles.append(
-        _profile_transform(
-            "vqt",
-            lambda: librosa.vqt(y=y_ref, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12),
+        stage_profiles.append(
+            _profile_transform(
+                "vqt",
+                lambda: librosa.vqt(y=y_ref, sr=SR, hop_length=512, n_bins=84, bins_per_octave=12),
+            )
         )
-    )
 
     if args.json_out:
         payload = {
             "meta": {
                 "benchmark": "phase12_cqt_vqt",
+                "rust_available": _has_rust_backend(),
                 "sr": SR,
                 "durations": args.durations,
                 "repeats": args.repeats,
                 "platform": platform.platform(),
                 "python": platform.python_version(),
                 "numpy": np.__version__,
-                "librosa": librosa.__version__,
+                "librosa": getattr(librosa, "__version__", "unknown"),
             },
             "cases": case_results,
             "stage_profiles": stage_profiles,

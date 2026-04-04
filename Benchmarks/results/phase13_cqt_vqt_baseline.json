@@ -1,0 +1,252 @@
+{
+  "meta": {
+    "benchmark": "phase12_cqt_vqt",
+    "rust_available": true,
+    "sr": 22050,
+    "durations": [
+      10,
+      30
+    ],
+    "repeats": 3,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.9",
+    "numpy": "2.4.4",
+    "librosa": "0.11.0"
+  },
+  "cases": [
+    {
+      "name": "mono-10s",
+      "shape_cqt": [
+        84,
+        431
+      ],
+      "shape_vqt": [
+        84,
+        431
+      ],
+      "rust_available": true,
+      "cqt_avg_ms": 8.651166669248292,
+      "cqt_min_ms": 8.46289994660765,
+      "vqt_avg_ms": 8.219000010285527,
+      "vqt_min_ms": 7.848400040529668,
+      "cqt_py_avg_ms": 9.020600002259016,
+      "cqt_py_min_ms": 8.432800008449703,
+      "cqt_avg_speedup": 1.042703296229851,
+      "cqt_min_speedup": 0.9964433068631502,
+      "vqt_py_avg_ms": 8.045766657839218,
+      "vqt_py_min_ms": 7.766700000502169,
+      "vqt_avg_speedup": 0.9789228188064827,
+      "vqt_min_speedup": 0.9895902299060197
+    },
+    {
+      "name": "stereo-10s",
+      "shape_cqt": [
+        2,
+        84,
+        431
+      ],
+      "shape_vqt": [
+        2,
+        84,
+        431
+      ],
+      "rust_available": true,
+      "cqt_avg_ms": 13.428333312428245,
+      "cqt_min_ms": 12.714499956928194,
+      "vqt_avg_ms": 12.633299998318156,
+      "vqt_min_ms": 11.683499964419752,
+      "cqt_py_avg_ms": 13.591800001449883,
+      "cqt_py_min_ms": 12.7834000159055,
+      "cqt_avg_speedup": 1.012173267167143,
+      "cqt_min_speedup": 1.0054190144489137,
+      "vqt_py_avg_ms": 12.168699991889298,
+      "vqt_py_min_ms": 11.700599978212267,
+      "vqt_avg_speedup": 0.9632241768587219,
+      "vqt_min_speedup": 1.0014636037013387
+    },
+    {
+      "name": "mono-30s",
+      "shape_cqt": [
+        84,
+        1292
+      ],
+      "shape_vqt": [
+        84,
+        1292
+      ],
+      "rust_available": true,
+      "cqt_avg_ms": 17.846866646626342,
+      "cqt_min_ms": 17.176800000015646,
+      "vqt_avg_ms": 15.726066660135984,
+      "vqt_min_ms": 15.252500015776604,
+      "cqt_py_avg_ms": 17.32886666043972,
+      "cqt_py_min_ms": 16.691300028469414,
+      "cqt_avg_speedup": 0.9709752979924606,
+      "cqt_min_speedup": 0.9717351327636236,
+      "vqt_py_avg_ms": 14.823733343898008,
+      "vqt_py_min_ms": 14.700200001243502,
+      "vqt_avg_speedup": 0.9426218052015956,
+      "vqt_min_speedup": 0.963789541782539
+    },
+    {
+      "name": "stereo-30s",
+      "shape_cqt": [
+        2,
+        84,
+        1292
+      ],
+      "shape_vqt": [
+        2,
+        84,
+        1292
+      ],
+      "rust_available": true,
+      "cqt_avg_ms": 35.40276666171849,
+      "cqt_min_ms": 34.9051000084728,
+      "vqt_avg_ms": 35.197366669308394,
+      "vqt_min_ms": 33.61300000688061,
+      "cqt_py_avg_ms": 36.8836666457355,
+      "cqt_py_min_ms": 35.532599955331534,
+      "cqt_avg_speedup": 1.041830063683083,
+      "cqt_min_speedup": 1.0179773141090103,
+      "vqt_py_avg_ms": 34.081066686970495,
+      "vqt_py_min_ms": 33.00970001146197,
+      "vqt_avg_speedup": 0.9682845596710138,
+      "vqt_min_speedup": 0.9820515873235016
+    }
+  ],
+  "stage_profiles": [
+    {
+      "name": "cqt",
+      "rows": [
+        {
+          "label": "__vqt_filter_fft",
+          "total_ms": 23.186599952168763,
+          "calls": 7,
+          "avg_ms": 3.3123714217383946,
+          "share_pct": 27.131110811792034
+        },
+        {
+          "label": "__cqt_response",
+          "total_ms": 19.192299980204552,
+          "calls": 14,
+          "avg_ms": 1.3708785700146109,
+          "share_pct": 22.45729941303357
+        },
+        {
+          "label": "filters.wavelet",
+          "total_ms": 14.539400057401508,
+          "calls": 7,
+          "avg_ms": 2.077057151057358,
+          "share_pct": 17.012846855859905
+        },
+        {
+          "label": "audio.resample",
+          "total_ms": 14.108500035945326,
+          "calls": 12,
+          "avg_ms": 1.1757083363287772,
+          "share_pct": 16.508642002408
+        },
+        {
+          "label": "stft",
+          "total_ms": 13.486499898135662,
+          "calls": 14,
+          "avg_ms": 0.9633214212954044,
+          "share_pct": 15.780827027436413
+        },
+        {
+          "label": "__trim_stack",
+          "total_ms": 0.4735999973490834,
+          "calls": 2,
+          "avg_ms": 0.2367999986745417,
+          "share_pct": 0.5541689611693384
+        },
+        {
+          "label": "filters.wavelet_lengths",
+          "total_ms": 0.4616999067366123,
+          "calls": 11,
+          "avg_ms": 0.04197271879423748,
+          "share_pct": 0.5402444238183104
+        },
+        {
+          "label": "__early_downsample",
+          "total_ms": 0.012699980288743973,
+          "calls": 2,
+          "avg_ms": 0.006349990144371986,
+          "share_pct": 0.014860504482428802
+        }
+      ],
+      "cache": {
+        "hits": 7,
+        "misses": 7,
+        "size": 7
+      }
+    },
+    {
+      "name": "vqt",
+      "rows": [
+        {
+          "label": "__vqt_filter_fft",
+          "total_ms": 22.451099997851998,
+          "calls": 7,
+          "avg_ms": 3.2072999996931424,
+          "share_pct": 29.89892129220167
+        },
+        {
+          "label": "__cqt_response",
+          "total_ms": 15.154600085224956,
+          "calls": 14,
+          "avg_ms": 1.0824714346589255,
+          "share_pct": 20.18191514920358
+        },
+        {
+          "label": "filters.wavelet",
+          "total_ms": 13.878400030080229,
+          "calls": 7,
+          "avg_ms": 1.982628575725747,
+          "share_pct": 18.48235454836325
+        },
+        {
+          "label": "audio.resample",
+          "total_ms": 12.841000047046691,
+          "calls": 12,
+          "avg_ms": 1.070083337253891,
+          "share_pct": 17.100812421508948
+        },
+        {
+          "label": "stft",
+          "total_ms": 9.792599885258824,
+          "calls": 14,
+          "avg_ms": 0.6994714203756303,
+          "share_pct": 13.041150466720522
+        },
+        {
+          "label": "filters.wavelet_lengths",
+          "total_ms": 0.5383999668993056,
+          "calls": 11,
+          "avg_ms": 0.048945451536300505,
+          "share_pct": 0.7170062150890804
+        },
+        {
+          "label": "__trim_stack",
+          "total_ms": 0.4183999844826758,
+          "calls": 2,
+          "avg_ms": 0.2091999922413379,
+          "share_pct": 0.5571980083783328
+        },
+        {
+          "label": "__early_downsample",
+          "total_ms": 0.015500001609325409,
+          "calls": 2,
+          "avg_ms": 0.0077500008046627045,
+          "share_pct": 0.020641898534617835
+        }
+      ],
+      "cache": {
+        "hits": 7,
+        "misses": 7,
+        "size": 7
+      }
+    }
+  ]
+}
