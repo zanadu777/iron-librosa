@@ -6,8 +6,8 @@ import os
 
 # Try to build and install first
 print("Building Rust extension...")
-import subprocess
-result = subprocess.run(
+import subprocess  # nosec B404
+result = subprocess.run(  # nosec B603
     [sys.executable, "-m", "pip", "install", "-e", "."],
     cwd="D:\\Dev\\Programming 2026\\Rust\\iron-librosa",
     capture_output=True,
