@@ -50,7 +50,6 @@ _CONTRAST_RUST_MODE = os.getenv("IRON_LIBROSA_CONTRAST_RUST_MODE", "auto").strip
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
     """Parse non-negative integer env knobs with safe fallback."""
-
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -107,7 +106,6 @@ def _contrast_rust_auto_ok(channel_count: int, n_bins: int, n_frames: int) -> bo
     - 3 channels: profitable from ~800 frames upward
     - 4+ channels: profitable even around 300 frames when total work is high
     """
-
     work = channel_count * n_bins * n_frames
 
     if channel_count <= 1:
@@ -133,7 +131,6 @@ def _contrast_rust_auto_ok(channel_count: int, n_bins: int, n_frames: int) -> bo
 
 def _contrast_rust_fused_ok(channel_count: int, n_bins: int, n_frames: int) -> bool:
     """Return whether fused contrast kernel should be used for this shape."""
-
     work = channel_count * n_bins * n_frames
 
     if channel_count <= 1:
@@ -186,7 +183,6 @@ _MEL_RUST_WORK_THRESHOLD = 201_226_955
 
 def _load_external_mel_threshold_registry() -> dict[str, int]:
     """Load optional per-profile mel thresholds from JSON file."""
-
     registry_path = os.getenv("IRON_LIBROSA_MEL_THRESHOLD_FILE", "").strip()
     if not registry_path:
         return {}
@@ -225,7 +221,6 @@ def _resolve_mel_work_threshold() -> int:
       3) IRON_LIBROSA_MEL_PROFILE against built-in registry
       4) _MEL_RUST_WORK_THRESHOLD fallback constant
     """
-
     env_override = os.getenv("IRON_LIBROSA_MEL_RUST_WORK_THRESHOLD")
     if env_override is not None:
         try:
@@ -636,7 +631,6 @@ def spectral_bandwidth(
             y=y, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length, freq=freq
         )
 
-
     # Rust fast path for static 1D frequency bins.
     if (
         RUST_AVAILABLE
@@ -1023,7 +1017,8 @@ def spectral_rolloff(
         Center frequencies for spectrogram bins.
         If `None`, then FFT bin center frequencies are used.
         Otherwise, it can be a single array of ``d`` center frequencies,
-        .. note:: ``freq`` is assumed to be sorted in increasing order
+        or a matrix of center frequencies as constructed by
+        `librosa.reassigned_spectrogram`
     roll_percent : float [0 < roll_percent < 1]
         Roll-off percentage.
 
@@ -1207,7 +1202,7 @@ def spectral_flatness(
         hop length for STFT. See `librosa.stft` for details.
     win_length : int <= n_fft [scalar]
         Each frame of audio is windowed by `window()`.
-        The window will be of length `win_length` and then padded
+        The window will be of length ``win_length`` and then padded
         with zeros to match ``n_fft``.
         If unspecified, defaults to ``win_length = n_fft``.
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
@@ -2568,11 +2563,11 @@ def mfcc(
     >>> img = librosa.display.specshow(librosa.power_to_db(S, ref=np.max),
     ...                                x_axis='time', y_axis='mel', fmax=8000,
     ...                                ax=ax[0])
-    >>> fig.colorbar(img, ax=[ax[0]])
-    >>> ax[0].set(title='Mel spectrogram')
-    >>> ax[0].label_outer()
+    >>> fig.colorbar(img, ax=ax, format='%+2.0f dB')
+    >>> ax.set(title='Mel spectrogram')
+    >>> ax.label_outer()
     >>> img = librosa.display.specshow(mfccs, x_axis='time', ax=ax[1])
-    >>> fig.colorbar(img, ax=[ax[1]])
+    >>> fig.colorbar(img, ax=ax[1])
     >>> ax[1].set(title='MFCC')
 
     Compare different DCT bases
@@ -2655,7 +2650,7 @@ def melspectrogram(
         audio time-series. Multi-channel is supported.
     sr : number > 0 [scalar]
         sampling rate of ``y``
-    S : np.ndarray [shape=(..., d, t)]
+    S : np.ndarray [shape=(..., d, t)] or None
         spectrogram
     n_fft : int > 0 [scalar]
         length of the FFT window
@@ -2682,7 +2677,7 @@ def melspectrogram(
         By default, STFT uses zero padding.
     power : float > 0 [scalar]
         Exponent for the magnitude melspectrogram.
-        e.g., 1 for energy, 2 for power, etc.
+        e.g., 1 for energy, 2 for power **(default)**, etc.
     **kwargs : additional keyword arguments for Mel filter bank parameters
     n_mels : int > 0 [scalar]
         number of Mel bands to generate

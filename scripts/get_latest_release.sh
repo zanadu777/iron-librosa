@@ -4,4 +4,10 @@
 #   This is used by the multi-version documentation build to automatically
 #   infer which doc site to consider "latest"
 
-git tag -l --sort=creatordate |egrep -v "rc|pre|post" |tail -1
+latest_release=$(git tag -l --sort=creatordate | egrep -v "rc|pre|post" | tail -1)
+
+if [ -n "$latest_release" ]; then
+	printf '%s\n' "$latest_release"
+else
+	printf 'main\n'
+fi

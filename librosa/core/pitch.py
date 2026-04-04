@@ -27,7 +27,6 @@ __all__ = ["estimate_tuning", "pitch_tuning", "piptrack", "yin", "pyin"]
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
     """Parse non-negative integer env settings with safe fallback."""
-
     raw = os.getenv(name)
     if raw is None:
         return default

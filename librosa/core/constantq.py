@@ -93,7 +93,7 @@ def __vqt_filter_fft_cached(
     dtype=np.complex64,
     alpha=None,
 ):
-    """Cached wrapper for __vqt_filter_fft with copy-on-read semantics."""
+    """Cache __vqt_filter_fft results with copy-on-read semantics."""
     key = __vqt_fft_cache_key(
         sr,
         freqs,
