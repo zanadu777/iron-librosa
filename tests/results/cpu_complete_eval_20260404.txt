@@ -1,0 +1,267 @@
+CPU Complete Eval - 2026-04-04
+
+Focused test commands run:
+1) python -m pytest tests/test_phase5_tuning.py -q
+   -> 14 passed in 2.38s
+
+2) python -m pytest tests/test_phase7_contrast.py -q
+   -> 35 passed in 2.35s
+
+3) python -m pytest tests/test_core.py -q -k "stft or istft or piptrack or estimate_tuning or yin or pyin"
+   -> 507 passed, 1 skipped, 24 xfailed
+
+4) python -m pytest tests/test_phase4_features.py tests/test_phase4c_chroma.py -q
+   -> 29 passed in 2.52s
+
+Focused benchmark commands run:
+1) python benchmark_phase5_tuning.py
+   - piptrack API speedup (min):
+     * 1025x200: 1.07x
+     * 1025x800: 1.69x
+     * 2049x1200: 1.69x
+   - estimate_tuning API speedup (min):
+     * 1025x200: 0.95x
+     * 1025x800: 1.51x
+     * 2049x1200: 1.63x
+
+2) python benchmark_phase11_contrast_multichannel.py
+   - frames=300: mono 0.98x, stereo 1.00x, quad 1.19x
+   - frames=800: mono 0.99x, stereo 0.38x, quad 1.40x
+   - frames=1600: mono 1.65x, stereo 0.38x, quad 1.18x
+
+3) python benchmark_phase5_spectral.py
+   - rolloff/bandwidth raw and forced-fallback: strong wins on medium/large workloads
+   - rms(y=...) forced-fallback speedup: 0.42x to 0.53x (Rust slower)
+   - spectral_flatness: medium/large wins, small case slower
+   - spectral_contrast: mono/quad often >= parity, stereo regresses heavily at medium/large
+
+Notes:
+- This is a quick-cycle evidence pass (not a full long-suite run).
+- Use this artifact to drive PASS/OPEN states in CPU_COMPLETE_CHECKLIST.md.
+
+Addendum (post stereo-policy fix):
+- `python -m pytest tests/test_phase7_contrast.py -q` -> 37 passed
+- `python benchmark_phase11_contrast_multichannel.py` samples:
+  - Sample A:
+    * frames=800: stereo 0.95x, quad 1.46x
+    * frames=1600: stereo 0.98x, quad 1.13x
+  - Sample B:
+    * frames=800: stereo 0.99x, quad 1.36x
+    * frames=1600: stereo 1.01x, quad 1.22x
+- Conclusion: previous severe stereo regression is resolved in medium/large workloads; stereo now near parity.
+
+Addendum (items 1-5 closure pass):
+- `python -m pytest tests/test_phase4c_chroma.py tests/test_features.py -q -k "chroma or mfcc or melspectrogram"`
+  -> 93 passed, 5 xfailed
+- `python -m pytest tests/test_phase10a_hpss.py tests/test_phase10c_hpss_optimization.py tests/test_decompose.py -q -k "hpss"`
+  -> 82 passed, 1 xfailed
+- `python benchmark_phase5_chroma.py`
+  - `filters.chroma` speedup: 2.78x to 5.25x
+  - `chroma_stft` speedup: 1.38x to 2.98x
+- `python benchmark_mfcc.py`
+  - full `mfcc(y=...)`: near parity (`0.92x` to `1.02x` across tested durations)
+  - DCT-only fast path: around parity to slight win (`0.99x` to `1.11x`)
+- `python benchmark_phase10a_hpss.py`, `python benchmark_phase10c_hpss_optimization.py`
+  - HPSS medium+ throughput remains strong; no correctness drift observed in focused parity tests
+- `python benchmark_phase10b_batch_parallel.py`
+  - parity summary: `9/9` passed
+  - note: default Windows console initially failed on Unicode parity glyphs (`UnicodeEncodeError`); script output was changed to ASCII parity labels and rerun successfully
+- `python benchmark_phase5_spectral.py`
+  - `rms(y=...)` remains slower on Rust path (`0.42x` to `0.50x`) -> keep gate OPEN
+- `python calibrate_mel_threshold.py --dry-run`
+  - suggested threshold on this host: `201_226_955`
+- `python calibrate_mel_threshold.py`
+  - applied `_MEL_RUST_WORK_THRESHOLD = 201_226_955` in `librosa/feature/spectral.py`
+- `python benchmark_melspectrogram.py`
+  - full API remains near parity to slight loss in sampled cases (`0.82x`, `0.89x`, `1.00x`); cross-CPU calibration still required
+- Niche API status checks:
+  - `python -m pytest tests/test_multichannel.py -q -k "phase_vocoder"` -> 2 passed
+  - `python -m pytest tests/test_constantq.py -q` -> 631 passed, 10 xfailed
+  - `python -m pytest tests/test_beat.py -q` -> 861 passed, 19 xfailed
+  - `python -m pytest tests/test_features.py -q -k "tonnetz"` -> 1 failed (`FileNotFoundError: tests\\data\\feature-tonnetz-chroma.npy`)
+
+Addendum (rms(y=...) optimization pass):
+- Code changes:
+  - `src/spectrum_utils.rs`: optimized `rms_time_f32` and `rms_time_f64` with frame-wise accumulation when frame-axis samples are contiguous (`util.frame`-style stride layout), fallback keeps prior row-wise path.
+  - `librosa/feature/spectral.py`: removed forced contiguous copy in `rms(y=...)` Rust path (`np.ascontiguousarray` -> `np.asarray`) to avoid large hot-path copies.
+- Build:
+  - `python -m maturin develop --release`
+- Focused tests:
+  - `python -m pytest tests/test_phase4_features.py -q -k "rms"` -> 8 passed
+- Benchmark:
+  - `python benchmark_phase5_spectral.py` (Section 5)
+    * frame_length=1024: speedup `1.06x`
+    * frame_length=2048: speedup `3.46x`
+    * frame_length=4096: speedup `8.75x`
+- Conclusion:
+  - `rms(y=...)` no longer regresses in the sampled cases and now exceeds parity on small/medium/large workloads.
+
+Addendum (rms(y=...) stability check, 3 repeated runs):
+- Command:
+  - `python benchmark_phase5_spectral.py` repeated 3 times (saved to `perf_spectral_rms_pass1.txt`, `perf_spectral_rms_pass2.txt`, `perf_spectral_rms_pass3.txt`)
+- Section 5 `speedup rms(y)` results:
+  - pass1: 1024=`1.34x`, 2048=`3.10x`, 4096=`8.41x`
+  - pass2: 1024=`1.01x`, 2048=`3.08x`, 4096=`9.58x`
+  - pass3: 1024=`1.33x`, 2048=`3.21x`, 4096=`9.48x`
+- Conclusion:
+  - medium/large are consistently strong (`>3x`, `>8x`), and small remains non-regressive (`>=1.0x` in all sampled runs).
+  - `rms(y=...)` PASS status remains valid for this host.
+
+Addendum (spectral_contrast multichannel stability check, 3 repeated runs):
+- Command:
+  - `python benchmark_phase11_contrast_multichannel.py` repeated 3 times (saved to `perf_contrast_pass1.txt`, `perf_contrast_pass2.txt`, `perf_contrast_pass3.txt`)
+- Medium/large sampled speedups:
+  - pass1: `frames=800` stereo=`1.01x`, quad=`1.38x`; `frames=1600` stereo=`0.93x`, quad=`1.15x`
+  - pass2: `frames=800` stereo=`0.96x`, quad=`1.39x`; `frames=1600` stereo=`0.95x`, quad=`1.17x`
+  - pass3: `frames=800` stereo=`0.96x`, quad=`1.39x`; `frames=1600` stereo=`1.02x`, quad=`1.25x`
+- Conclusion:
+  - quad is consistently strong (`~1.15x` to `1.39x`) on medium/large.
+  - stereo remains near parity with run-to-run variance (`~0.93x` to `1.02x`) and no severe regression collapse.
+
+Addendum (mel threshold cross-CPU strategy pass):
+- Code changes:
+  - `librosa/feature/spectral.py`:
+    * added `_resolve_mel_work_threshold()` with precedence:
+      1) `IRON_LIBROSA_MEL_RUST_WORK_THRESHOLD`
+      2) `IRON_LIBROSA_MEL_PROFILE` lookup in external JSON registry (`IRON_LIBROSA_MEL_THRESHOLD_FILE`)
+      3) `IRON_LIBROSA_MEL_PROFILE` lookup in built-in registry (`librosa/feature/_mel_threshold_registry.py`)
+      4) fallback `_MEL_RUST_WORK_THRESHOLD`
+    * `melspectrogram()` auto path now uses resolved threshold instead of only static constant.
+  - `calibrate_mel_threshold.py`:
+    * added profile key detection (`<os>-<arch>-<blas>`), `--profile`, `--registry`, and optional JSON registry update.
+  - new file: `librosa/feature/_mel_threshold_registry.py` (built-in conservative mapping scaffold).
+  - new tests: `tests/test_mel_threshold_policy.py`.
+- Validation:
+  - `python -m pytest tests/test_mel_threshold_policy.py -q` -> 4 passed
+  - `python -m pytest tests/test_features.py -q -k "melspectrogram"` -> 3 passed
+  - `python calibrate_mel_threshold.py --dry-run --skip-registry`
+    * profile key detected on this host: `windows-amd64-openblas`
+  - `python benchmark_melspectrogram.py`
+    * full API speedup samples: `0.78x`, `1.23x`, `1.02x`
+- Conclusion:
+  - cross-CPU threshold strategy is implemented and validated locally; mel gate remains OPEN pending multi-host registry population.
+
+Addendum (Phase 12 remaining-items pass):
+- Planning/docs artifacts:
+  - `PHASE12_CPU_REMAINING_PLAN.md`
+  - `PHASE12_CQT_VQT_ACCELERATION_PLAN.md`
+  - `PHASE12_TONNETZ_DECISION.md`
+- Mel cross-CPU strategy completion work:
+  - Added built-in registry scaffold `librosa/feature/_mel_threshold_registry.py`
+  - Added local registry file `mel_threshold_registry.json` with profile `windows-amd64-openblas`
+  - Expanded mel threshold tests in `tests/test_mel_threshold_policy.py`
+  - Test result: `python -m pytest tests/test_mel_threshold_policy.py -q` -> 6 passed
+- Phase vocoder:
+  - Benchmark harness: `benchmark_phase12_phase_vocoder.py`
+  - Focused parity tests: `python -m pytest tests/test_multichannel.py -q -k "phase_vocoder"` -> 2 passed
+  - Benchmark sample: multichannel parity `PASS`
+- CQT/VQT:
+  - Baseline tests: `python -m pytest tests/test_constantq.py -q` -> 631 passed, 10 xfailed
+  - Benchmark harness: `benchmark_phase12_cqt_vqt.py` (10s/30s CQT+VQT timings captured)
+- Tonnetz:
+  - Updated `tests/test_features.py::test_tonnetz_msaf` to skip when optional fixture files are absent
+  - Focused tests: `python -m pytest tests/test_features.py -q -k "phase_vocoder or tonnetz or melspectrogram"` -> 6 passed, 1 skipped, 1 xfailed
+- Beat track:
+  - Baseline tests: `python -m pytest tests/test_beat.py -q` -> 861 passed, 1 skipped, 19 xfailed
+  - Profiling/benchmark harness: `benchmark_phase12_beat_track.py`
+  - Status: profiling done; direct hotspot mitigation implementation still pending
+Addendum (beat_track direct mitigation pass):
+- Code changes:
+  - `librosa/beat.py`
+    * `__beat_local_score` now uses `cache=True` (numba cache enabled)
+    * static-tempo local-score path switched to convolution slice (`np.convolve`) instead of nested Python-style loops
+  - `benchmark_phase12_beat_track.py`
+    * added untimed warm-up calls for `beat_track` and `onset_strength` to report steady-state timings
+- Validation:
+  - `python -m pytest tests/test_beat.py -q` -> 861 passed, 1 skipped, 19 xfailed
+- Warmed benchmark sample (`python benchmark_phase12_beat_track.py`):
+  - `click_120bpm_30s`: avg `7.859 ms`, min `7.563 ms`
+  - `noisy_30s`: avg `26.468 ms`, min `25.262 ms`
+  - `noisy_120s`: avg `136.668 ms`, min `123.605 ms`
+- Notes:
+  - first direct beat-track mitigation is in place and parity/regression tests remain green.
+  - additional hotspot optimization remains open for final beat-track gate closure.
+
+Addendum (beat_track tempo-window closure pass):
+- Code changes:
+  - `librosa/beat.py`
+    * added `_BEAT_TRACK_TEMPO_AC_SIZE = 4.0`
+    * `beat_track(..., bpm=None)` now calls `_tempo(..., ac_size=_BEAT_TRACK_TEMPO_AC_SIZE)`
+- Validation:
+  - `python -m pytest tests/test_beat.py -q` -> 861 passed, 1 skipped, 19 xfailed
+  - `python -u benchmark_phase12_beat_track.py` (stage benchmark harness)
+- Before/after end-to-end benchmark (avg ms):
+  - `noisy_30s`: `30.693` -> `26.713` (~13.0% faster)
+  - `noisy_120s`: `148.751` -> `99.487` (~33.1% faster)
+- Stage observations after change:
+  - `noisy_30s`: onset `6.490 ms` (26.5%), tempo `17.222 ms` (70.3%)
+  - `noisy_120s`: onset `46.355 ms` (36.7%), tempo `77.807 ms` (61.6%)
+  - DP/local/post remain low (each <= ~1.2% on sampled cases)
+- Conclusion:
+  - targeted tempo-stage mitigation improved beat_track end-to-end performance on medium/long noisy workloads while preserving parity in focused beat tests.
+
+
+Addendum (mel validation refresh - 2026-04-04, clean capture):
+- Validation:
+  - `python -m pytest tests/test_mel_threshold_policy.py -q` -> 6 passed in 2.22s
+  - `python -m pytest tests/test_features.py -q -k "melspectrogram"` -> 3 passed, 526 deselected, 2 warnings in 2.33s
+- Calibration refresh:
+  - `python calibrate_mel_threshold.py --dry-run --skip-registry`
+  - profile key: `windows-amd64-openblas`
+  - suggested threshold: `201_226_955` (unchanged)
+- Benchmark refresh (`python benchmark_melspectrogram.py`, speedup min):
+  - n_fft=1024, frames=300, n_mels=64: `0.92x`
+  - n_fft=2048, frames=800, n_mels=128: `1.13x`
+  - n_fft=4096, frames=1200, n_mels=256: `0.99x`
+- Registry status:
+  - `mel_threshold_registry.json` and `librosa/feature/_mel_threshold_registry.py` include:
+    * `windows-amd64-openblas`: `201226955`
+    * `windows-amd64-mkl`: `0`
+    * `linux-x86_64-openblas`: `0`
+    * `darwin-arm64-accelerate`: `0`
+- Conclusion:
+  - mel threshold policy and parity checks are green on this host; cross-CPU representative keys are in place with conservative defaults, and measured multi-host thresholds remain the final promotion blocker.
+
+Addendum (phase_vocoder optimization pass - 2026-04-04):
+- Code changes:
+  - `librosa/core/spectrum.py` (`phase_vocoder`):
+    * precomputed padded magnitude/phase tensors (`D_mag`, `D_phase`)
+    * precomputed integer frame indices and interpolation weights
+    * removed repeated per-frame `np.abs` / `np.angle` / `np.mod` calls in the synthesis loop
+  - `benchmark_phase12_phase_vocoder.py`:
+    * added per-case warm-up and removed extra untimed transform call
+- Validation:
+  - `python -m pytest tests/test_multichannel.py -q -k "phase_vocoder"` -> 2 passed, 137 deselected
+  - `python -m pytest tests/test_features.py -q -k "stft_complex_phase_vocoder_parity"` -> 1 passed, 528 deselected
+  - benchmark output: `tmp_phase12_bench_phase_vocoder_after_opt2.txt`
+- Benchmark comparison (min runtime):
+  - mono rate=0.75: `125.191 ms` -> `93.566 ms`
+  - mono rate=1.25: `77.971 ms` -> `65.717 ms`
+  - stereo rate=0.75: `227.668 ms` -> `184.288 ms`
+  - stereo rate=1.25: `141.283 ms` -> `128.716 ms`
+- Conclusion:
+  - phase_vocoder parity remains intact and medium-workload runtime improves across tested mono/stereo rates.
+
+Addendum (CQT/VQT resample-guard pass - 2026-04-04):
+- Code changes:
+  - `librosa/core/constantq.py` (`vqt`):
+    * guarded recursive downsample to only run when another octave remains (`i < n_octaves - 1`)
+    * removes one unnecessary final `audio.resample` call per transform
+- Test coverage:
+  - added `tests/test_constantq.py::test_vqt_skips_final_unneeded_downsample`
+- Validation:
+  - `python -m pytest tests/test_constantq.py -q` -> 632 passed, 10 xfailed
+  - benchmark output: `tmp_phase12_bench_cqt_vqt_after_resample_guard.txt`
+- Benchmark comparison (min runtime):
+  - `cqt mono-30s`: `16.078 ms` -> `15.703 ms`
+  - `vqt mono-30s`: `14.590 ms` -> `14.377 ms`
+  - `cqt stereo-30s`: `33.065 ms` -> `32.592 ms`
+  - `vqt stereo-30s`: `29.730 ms` -> `28.060 ms`
+- Conclusion:
+  - CQT/VQT parity remains intact and removing the final unneeded downsample yields consistent additional runtime improvement.
+
+Addendum (benchmark artifact reorganization - 2026-04-04):
+- Benchmark result artifacts were moved from repo root into `benchmarks/results/`.
+- Historical addendum references to root-level `tmp_*` / `perf_*` / `benchmark_*output*.txt` files should now be interpreted under `benchmarks/results/`.
+- Benchmark entrypoint scripts were moved from repo root to `benchmarks/scripts/`.
+- Preferred invocation form is now `python benchmarks/scripts/<benchmark_script>.py` with outputs under `benchmarks/results/`.

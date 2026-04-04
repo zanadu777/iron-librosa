@@ -7,6 +7,7 @@ from . import notation
 from ..util.exceptions import ParameterError
 from ..util.decorators import vectorize
 from typing import Any, Callable, Dict, Iterable, Optional, Sized, Union, overload
+from .._rust_bridge import _rust_ext, RUST_AVAILABLE  # iron-librosa Rust bridge
 from .._typing import (
     _IterableLike,
     _FloatLike_co,
@@ -1207,6 +1208,11 @@ def hz_to_mel(
     """
     frequencies = np.asanyarray(frequencies)
 
+    # --- iron-librosa: Rust acceleration ---
+    if RUST_AVAILABLE and hasattr(_rust_ext, "hz_to_mel") and frequencies.ndim:
+        return _rust_ext.hz_to_mel(np.asarray(frequencies, dtype=np.float64), htk=htk)
+    # --- end Rust acceleration ---
+
     if htk:
         mels: np.ndarray = 2595.0 * np.log10(1.0 + frequencies / 700.0)
         return mels
@@ -1281,6 +1287,11 @@ def mel_to_hz(
     hz_to_mel
     """
     mels = np.asanyarray(mels)
+
+    # --- iron-librosa: Rust acceleration ---
+    if RUST_AVAILABLE and hasattr(_rust_ext, "mel_to_hz") and mels.ndim:
+        return _rust_ext.mel_to_hz(np.asarray(mels, dtype=np.float64), htk=htk)
+    # --- end Rust acceleration ---
 
     if htk:
         return 700.0 * (10.0 ** (mels / 2595.0) - 1.0)

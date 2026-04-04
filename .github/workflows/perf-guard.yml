@@ -1,0 +1,57 @@
+name: Performance Guard
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Benchmark repetitions"
+        required: false
+        default: "8"
+      batches:
+        description: "Timing batches (median of batch minima)"
+        required: false
+        default: "3"
+      min_full_speedup:
+        description: "Minimum full MFCC speedup"
+        required: false
+        default: "0.70"
+      min_dct_speedup:
+        description: "Minimum DCT-focused MFCC speedup"
+        required: false
+        default: "0.80"
+      min_onset_mean_speedup:
+        description: "Minimum onset mean-path speedup"
+        required: false
+        default: "0.95"
+      min_onset_maxfilter_speedup:
+        description: "Minimum onset max-filter-path speedup"
+        required: false
+        default: "0.90"
+
+jobs:
+  mfcc-guard:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install maturin
+
+      - name: Build and install extension
+        run: |
+          python -m maturin develop --release
+
+      - name: Run performance guard
+        run: |
+          python -u benchmark_guard.py --runs ${{ inputs.runs }} --batches ${{ inputs.batches }} --min-full-speedup ${{ inputs.min_full_speedup }} --min-dct-speedup ${{ inputs.min_dct_speedup }} --min-onset-mean-speedup ${{ inputs.min_onset_mean_speedup }} --min-onset-maxfilter-speedup ${{ inputs.min_onset_maxfilter_speedup }}

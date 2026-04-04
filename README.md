@@ -28,6 +28,7 @@ A python package for music and audio analysis.
       - [Linux (`yum`)](#linux-yum)
       - [Mac](#mac)
       - [Windows](#windows)
+- [Performance guard](#performance-guard)
 - [Discussion](#discussion)
 - [Citing](#citing)
 
@@ -172,6 +173,28 @@ For GStreamer, you also need to install the Python bindings with
 ```
 python -m pip install pygobject
 ```
+
+---
+
+[Back To Top ↥](#librosa)
+
+## Performance guard
+
+This repository includes a lightweight MFCC performance guard script:
+
+```bash
+python -u benchmarks/scripts/benchmark_guard.py
+```
+
+Useful options:
+
+```bash
+python -u benchmarks/scripts/benchmark_guard.py --runs 10
+python -u benchmarks/scripts/benchmark_guard.py --min-full-speedup 1.00 --min-dct-speedup 1.00
+```
+
+A manual GitHub Actions workflow is also available at
+`.github/workflows/perf-guard.yml` (`Actions` -> `Performance Guard` -> `Run workflow`).
 
 ---
 

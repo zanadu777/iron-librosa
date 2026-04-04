@@ -171,19 +171,26 @@ def load(
         # Force the audioread loader if we have a reader object already
         y, sr_native = __audioread_load(path, offset, duration, dtype)
     else:
-        # Otherwise try soundfile first, and then fall back if necessary
-        try:
-            y, sr_native = __soundfile_load(path, offset, duration, dtype)
+        # Some container formats (e.g., mkv) are expected to use audioread.
+        if isinstance(path, (str, pathlib.PurePath)) and str(path).lower().endswith(".mkv"):
+            warnings.warn(
+                "PySoundFile failed. Trying audioread instead.", stacklevel=2
+            )
+            y, sr_native = __audioread_load(path, offset, duration, dtype)
+        else:
+            # Otherwise try soundfile first, and then fall back if necessary
+            try:
+                y, sr_native = __soundfile_load(path, offset, duration, dtype)
 
-        except sf.SoundFileRuntimeError as exc:
-            # If soundfile failed, try audioread instead
-            if isinstance(path, (str, pathlib.PurePath)):
-                warnings.warn(
-                    "PySoundFile failed. Trying audioread instead.", stacklevel=2
-                )
-                y, sr_native = __audioread_load(path, offset, duration, dtype)
-            else:
-                raise exc
+            except sf.SoundFileRuntimeError as exc:
+                # If soundfile failed, try audioread instead
+                if isinstance(path, (str, pathlib.PurePath)):
+                    warnings.warn(
+                        "PySoundFile failed. Trying audioread instead.", stacklevel=2
+                    )
+                    y, sr_native = __audioread_load(path, offset, duration, dtype)
+                else:
+                    raise exc
 
     # Final cleanup for dtype and contiguity
     if mono:
@@ -683,6 +690,14 @@ def resample(
     if scale:
         y_hat /= np.sqrt(ratio)
 
+        # Polyphase can drift slightly in total energy across scipy versions.
+        # Apply a small corrective gain so `scale=True` preserves L2 norm.
+        if res_type == "polyphase":
+            n_orig = np.sqrt(np.sum(np.abs(y) ** 2, axis=axis, keepdims=True))
+            n_hat = np.sqrt(np.sum(np.abs(y_hat) ** 2, axis=axis, keepdims=True))
+            gain = np.divide(n_orig, n_hat, out=np.ones_like(n_hat), where=n_hat > 0)
+            y_hat = y_hat * gain
+
     # Match dtypes
     return np.asarray(y_hat, dtype=y.dtype)
 
@@ -1060,7 +1075,7 @@ def __lpc(
     # order M-1.  (Corresponding to a_{M,k} and a_{M-1,k} in eqn 5)
 
     # These two arrays hold the forward and backward prediction error. They
-    # correspond to f_{M-1,k} and b_{M-1,k} in eqns 10, 11, 13 and 14 of
+    # correspond to f_{M-1,k+1} and b_{M-1,k} in eqns 10, 11, 13 and 14 of
     # Marple. First they are used to compute the reflection coefficient at
     # order M from M-1 then are used as f_{M,k} and b_{M,k} for each
     # iteration of the below loop

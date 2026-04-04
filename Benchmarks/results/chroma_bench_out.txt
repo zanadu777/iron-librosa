@@ -1,0 +1,37 @@
+========================================================================
+Phase 5 chroma filter benchmark
+========================================================================
+
+case: n_fft=2048, n_chroma=12
+  filters.chroma rust            avg=   0.332 ms  min=   0.241 ms
+  filters.chroma py              avg=   0.673 ms  min=   0.643 ms
+  speedup (min)                    2.67x
+
+case: n_fft=4096, n_chroma=12
+  filters.chroma rust            avg=   0.461 ms  min=   0.417 ms
+  filters.chroma py              avg=   1.695 ms  min=   1.610 ms
+  speedup (min)                    3.86x
+
+case: n_fft=4096, n_chroma=24
+  filters.chroma rust            avg=   0.497 ms  min=   0.469 ms
+  filters.chroma py              avg=   2.819 ms  min=   2.692 ms
+  speedup (min)                    5.74x
+
+========================================================================
+Phase 5 chroma_stft benchmark (fixed tuning)
+========================================================================
+
+case: n_fft=2048, n_chroma=12, frames=800
+  chroma_stft rust               avg=   0.759 ms  min=   0.613 ms
+  chroma_stft py                 avg=   1.227 ms  min=   1.060 ms
+  speedup (min)                    1.73x
+
+case: n_fft=4096, n_chroma=12, frames=800
+  chroma_stft rust               avg=   0.862 ms  min=   0.790 ms
+  chroma_stft py                 avg=   1.968 ms  min=   1.765 ms
+  speedup (min)                    2.23x
+
+case: n_fft=4096, n_chroma=24, frames=800
+  chroma_stft rust               avg=   1.082 ms  min=   0.958 ms
+  chroma_stft py                 avg=   4.150 ms  min=   3.878 ms
+  speedup (min)                    4.05x

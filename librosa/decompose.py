@@ -11,22 +11,27 @@ Spectrogram decomposition
     nn_filter
 """
 
+__all__ = ["decompose", "hpss", "nn_filter"]
+
 import numpy as np
-
 import scipy.sparse
-from scipy.ndimage import median_filter
-
 import sklearn.decomposition
-
-from . import core
+from scipy.ndimage import median_filter
+from typing import Any, Callable, List, Optional, Tuple, Union
 from ._cache import cache
+from ._typing import _IntLike_co, _FloatLike_co
 from . import segment
 from . import util
-from .util.exceptions import ParameterError
-from typing import Any, Callable, List, Optional, Tuple, Union
-from ._typing import _IntLike_co, _FloatLike_co
+from . import core
 
-__all__ = ["decompose", "hpss", "nn_filter"]
+from .util.exceptions import ParameterError
+
+# Try to import the Rust backend
+try:
+    from librosa import _rust
+    _HAS_RUST = True
+except ImportError:
+    _HAS_RUST = False
 
 
 def decompose(
@@ -385,12 +390,59 @@ def hpss(
     perc_shape: List[_IntLike_co] = [1] * S.ndim
     perc_shape[-2] = win_perc
 
-    # Compute median filters. Pre-allocation here preserves memory layout.
-    harm = np.empty_like(S)
-    harm[:] = median_filter(S, size=harm_shape, mode="reflect")
+    use_rust_hpss = (
+        _HAS_RUST
+        and S.ndim >= 2
+        and S.flags["C_CONTIGUOUS"]
+        and np.isfinite(power)
+        and S.dtype in (np.float32, np.float64)
+    )
 
-    perc = np.empty_like(S)
-    perc[:] = median_filter(S, size=perc_shape, mode="reflect")
+    if use_rust_hpss:
+        rust_hpss = _rust.hpss_fused_f32 if S.dtype == np.float32 else _rust.hpss_fused_f64
+        rust_hpss_batch = (
+            _rust.hpss_fused_batch_f32 if S.dtype == np.float32 else _rust.hpss_fused_batch_f64
+        )
+
+        if S.ndim == 2:
+            harm, perc = rust_hpss(
+                S,
+                int(win_harm),
+                int(win_perc),
+                float(power),
+                float(margin_harm),
+                float(margin_perc),
+                bool(mask),
+            )
+        else:
+            batch_shape = S.shape[:-2]
+            n_bins, n_frames = S.shape[-2:]
+            s_batch = S.reshape((-1, n_bins, n_frames))
+            harm_batch, perc_batch = rust_hpss_batch(
+                s_batch,
+                int(win_harm),
+                int(win_perc),
+                float(power),
+                float(margin_harm),
+                float(margin_perc),
+                bool(mask),
+            )
+
+            harm = harm_batch.reshape(S.shape)
+            perc = perc_batch.reshape(S.shape)
+    else:
+        # Compute median filters. Pre-allocation here preserves memory layout.
+        harm = np.empty_like(S)
+        harm[:] = median_filter(S, size=harm_shape, mode="reflect")
+
+        perc = np.empty_like(S)
+        perc[:] = median_filter(S, size=perc_shape, mode="reflect")
+
+    if use_rust_hpss:
+        if mask:
+            return harm, perc
+
+        return (harm * phase, perc * phase)
 
     split_zeros = margin_harm == 1 and margin_perc == 1
 
@@ -527,8 +579,62 @@ def nn_filter(
     >>> fig.colorbar(imgr1, ax=[ax[3]])
     >>> fig.colorbar(imgr2, ax=[ax[4]])
     """
+    # Fast path: use Rust if available and aggregate is mean or np.average
+    if _HAS_RUST and (aggregate is None or aggregate is np.mean or aggregate is np.average):
+        if rec is None:
+            kwargs = dict(kwargs)
+            kwargs["sparse"] = True
+            rec_s = segment.recurrence_matrix(S, axis=axis, **kwargs)
+        elif not scipy.sparse.issparse(rec):
+            rec_s = scipy.sparse.csc_matrix(rec)
+        else:
+            rec_s = rec
+        if rec_s.shape[0] != S.shape[axis] or rec_s.shape[0] != rec_s.shape[1]:
+            raise ParameterError(
+                f"Invalid self-similarity matrix shape rec.shape={rec_s.shape} for S.shape={S.shape}"
+            )
+        # Only support axis=-1 for Rust path for now
+        if axis != -1:
+            return nn_filter(np.swapaxes(S, 0, axis), rec=rec, aggregate=aggregate, axis=-1, **kwargs).swapaxes(0, axis)
+        weighted = (aggregate is np.average)
+        # Ensure CSC so that indptr[i]:indptr[i+1] always covers the i-th column
+        # (neighbours of frame i for a symmetric recurrence matrix).
+        if not scipy.sparse.isspmatrix_csc(rec_s):
+            rec_s = rec_s.tocsc()
+
+        # Rust kernel assumes observations are on axis 0 (same as __nn_filter_helper).
+        s_work = np.ascontiguousarray(S.swapaxes(0, axis), dtype=np.float64)
+        rec_data = np.ascontiguousarray(rec_s.data, dtype=np.float64)
+        rec_indices = np.ascontiguousarray(rec_s.indices, dtype=np.int32)
+        rec_indptr = np.ascontiguousarray(rec_s.indptr, dtype=np.int32)
+        return _rust.nn_filter(
+            s_work,
+            rec_data,
+            rec_indices,
+            rec_indptr,
+            weighted,
+        ).swapaxes(0, axis)
+
     if aggregate is None:
         aggregate = np.mean
+
+    # Handle multi-channel input: if S has more than 2 dimensions and rec is None,
+    # compute recurrence matrix and filter independently for each channel.
+    if rec is None and S.ndim > 2:
+        filtered = []
+        for ch in range(S.shape[0]):
+            ch_kwargs = dict(kwargs)
+            ch_kwargs["sparse"] = True
+            rec_ch = segment.recurrence_matrix(S[ch], axis=axis, **ch_kwargs)
+            if rec_ch.shape[0] != S[ch].shape[axis] or rec_ch.shape[0] != rec_ch.shape[1]:
+                raise ParameterError(
+                    f"Invalid self-similarity matrix shape rec.shape={rec_ch.shape} for S[ch].shape={S[ch].shape}"
+                )
+            filtered_ch = __nn_filter_helper(
+                rec_ch.data, rec_ch.indices, rec_ch.indptr, S[ch].swapaxes(0, axis-1 if axis > 0 else -1), aggregate
+            ).swapaxes(0, axis-1 if axis > 0 else -1)
+            filtered.append(filtered_ch)
+        return np.stack(filtered, axis=0)
 
     rec_s: scipy.sparse.spmatrix
 

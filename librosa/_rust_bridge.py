@@ -1,0 +1,53 @@
+"""
+iron-librosa Rust bridge
+========================
+
+This module is the single import point for the compiled Rust extension
+``librosa._rust``.  All Python submodules that want to dispatch to Rust
+should import from here::
+
+    from .._rust_bridge import _rust_ext, RUST_AVAILABLE
+
+Design:
+  - ``_rust_ext``      : the compiled extension module, or ``None`` when
+                         the Rust build is not available (e.g., a source-
+                         only install, CI without Rust, etc.).
+  - ``RUST_AVAILABLE`` : convenience boolean for ``_rust_ext is not None``.
+
+Adding new Rust accelerations
+------------------------------
+1. Implement the function in ``src/<module>.rs`` and register it in
+   ``src/lib.rs`` (``m.add_function(...)``).
+2. In the corresponding Python file, add a guard at the top of the
+   function body::
+
+       if RUST_AVAILABLE and hasattr(_rust_ext, "my_function"):
+           return _rust_ext.my_function(...)
+       # ... original Python implementation follows ...
+
+   The ``hasattr`` check lets you deploy incrementally: the Python
+   fallback remains active until the Rust version is wired up.
+"""
+
+from __future__ import annotations
+
+import os
+
+try:
+    from librosa import _rust as _rust_ext  # type: ignore[attr-defined]
+
+    RUST_AVAILABLE: bool = True
+except ImportError:
+    _rust_ext = None  # type: ignore[assignment]
+    RUST_AVAILABLE = False
+
+
+# Mel backend policy override for librosa.feature.melspectrogram 2D path.
+# Accepted values: "auto" (default), "numpy", "rust".
+_mel_backend = os.getenv("IRON_LIBROSA_MEL_BACKEND", "auto").strip().lower()
+if _mel_backend not in {"auto", "numpy", "rust"}:
+    _mel_backend = "auto"
+
+FORCE_NUMPY_MEL: bool = _mel_backend == "numpy"
+FORCE_RUST_MEL: bool = _mel_backend == "rust"
+

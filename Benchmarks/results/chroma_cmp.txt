@@ -1,0 +1,6 @@
+(120, 1025) (120, 1025)
+maxabs 0.0
+argmax-rust (np.int64(68), np.int64(144))
+argmax-py (np.int64(68), np.int64(144))
+col0 argmax rust 108
+col0 argmax py 108

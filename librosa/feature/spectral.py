@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """Spectral feature extraction"""
 
+import os
+import json
 import numpy as np
 import scipy
 import scipy.signal
@@ -16,10 +18,143 @@ from ..core.audio import zero_crossings
 from ..core.spectrum import power_to_db, _spectrogram
 from ..core.constantq import cqt, hybrid_cqt, vqt
 from ..core.pitch import estimate_tuning
+from .._rust_bridge import (
+    _rust_ext,
+    RUST_AVAILABLE,
+    FORCE_RUST_MEL,
+    FORCE_NUMPY_MEL,
+)
 from typing import Any, Optional, Union, Collection
 from typing_extensions import Literal
 from numpy.typing import DTypeLike
 from .._typing import _FloatLike_co, _WindowSpec, _PadMode, _PadModeSTFT
+
+try:
+    from ._mel_threshold_registry import MEL_WORK_THRESHOLDS
+except Exception:
+    MEL_WORK_THRESHOLDS = {}
+
+
+_ENABLE_RUST_RMS_TIME = os.getenv("IRON_LIBROSA_ENABLE_RUST_RMS_TIME", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+# Spectral contrast dispatch policy:
+# - auto: use Rust only above tuned workload threshold
+# - rust: force Rust when kernel is available
+# - python: force Python fallback
+_CONTRAST_RUST_MODE = os.getenv("IRON_LIBROSA_CONTRAST_RUST_MODE", "auto").strip().lower()
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    """Parse non-negative integer env knobs with safe fallback."""
+
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    try:
+        parsed = int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+
+    if parsed < minimum:
+        return default
+
+    return parsed
+
+
+_CONTRAST_RUST_WORK_THRESHOLD = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_WORK_THRESHOLD", 1_500_000
+)
+_CONTRAST_RUST_MIN_FRAMES = _env_int("IRON_LIBROSA_CONTRAST_RUST_MIN_FRAMES", 1200)
+_CONTRAST_RUST_STEREO_MIN_FRAMES = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_STEREO_MIN_FRAMES", 2000
+)
+_CONTRAST_RUST_STEREO_WORK_THRESHOLD = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_STEREO_WORK_THRESHOLD", 4_000_000
+)
+_CONTRAST_RUST_MULTICHANNEL_MIN_FRAMES = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_MULTICHANNEL_MIN_FRAMES", 800
+)
+_CONTRAST_RUST_HEAVY_CHANNELS = _env_int("IRON_LIBROSA_CONTRAST_RUST_HEAVY_CHANNELS", 4, minimum=1)
+_CONTRAST_RUST_HEAVY_WORK_THRESHOLD = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_HEAVY_WORK_THRESHOLD", 1_200_000
+)
+_CONTRAST_RUST_HEAVY_MIN_FRAMES = _env_int("IRON_LIBROSA_CONTRAST_RUST_HEAVY_MIN_FRAMES", 300)
+_CONTRAST_RUST_FUSED_MONO_MIN_FRAMES = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_FUSED_MONO_MIN_FRAMES", 1400
+)
+_CONTRAST_RUST_FUSED_MONO_WORK_THRESHOLD = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_FUSED_MONO_WORK_THRESHOLD", 1_600_000
+)
+_CONTRAST_RUST_FUSED_STEREO_MIN_FRAMES = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_FUSED_STEREO_MIN_FRAMES", 2000
+)
+_CONTRAST_RUST_FUSED_STEREO_WORK_THRESHOLD = _env_int(
+    "IRON_LIBROSA_CONTRAST_RUST_FUSED_STEREO_WORK_THRESHOLD", 4_000_000
+)
+
+
+def _contrast_rust_auto_ok(channel_count: int, n_bins: int, n_frames: int) -> bool:
+    """Return whether spectral_contrast should use Rust in auto mode.
+
+    Policy tiers are tuned from empirical scans:
+    - mono: only large frame counts are profitable
+    - stereo: stay conservative in auto mode (recent scans show regressions)
+    - 3 channels: profitable from ~800 frames upward
+    - 4+ channels: profitable even around 300 frames when total work is high
+    """
+
+    work = channel_count * n_bins * n_frames
+
+    if channel_count <= 1:
+        return work >= _CONTRAST_RUST_WORK_THRESHOLD and n_frames >= _CONTRAST_RUST_MIN_FRAMES
+
+    if channel_count == 2:
+        return (
+            work >= _CONTRAST_RUST_STEREO_WORK_THRESHOLD
+            and n_frames >= _CONTRAST_RUST_STEREO_MIN_FRAMES
+        )
+
+    if channel_count < _CONTRAST_RUST_HEAVY_CHANNELS:
+        return (
+            work >= _CONTRAST_RUST_WORK_THRESHOLD
+            and n_frames >= _CONTRAST_RUST_MULTICHANNEL_MIN_FRAMES
+        )
+
+    return (
+        work >= _CONTRAST_RUST_HEAVY_WORK_THRESHOLD
+        and n_frames >= _CONTRAST_RUST_HEAVY_MIN_FRAMES
+    )
+
+
+def _contrast_rust_fused_ok(channel_count: int, n_bins: int, n_frames: int) -> bool:
+    """Return whether fused contrast kernel should be used for this shape."""
+
+    work = channel_count * n_bins * n_frames
+
+    if channel_count <= 1:
+        return (
+            work >= _CONTRAST_RUST_FUSED_MONO_WORK_THRESHOLD
+            and n_frames >= _CONTRAST_RUST_FUSED_MONO_MIN_FRAMES
+        )
+
+    if channel_count == 2:
+        return (
+            work >= _CONTRAST_RUST_FUSED_STEREO_WORK_THRESHOLD
+            and n_frames >= _CONTRAST_RUST_FUSED_STEREO_MIN_FRAMES
+        )
+
+    if channel_count < _CONTRAST_RUST_HEAVY_CHANNELS:
+        return (
+            work >= _CONTRAST_RUST_FUSED_STEREO_WORK_THRESHOLD
+            or n_frames >= _CONTRAST_RUST_FUSED_STEREO_MIN_FRAMES
+        )
+
+    return True
 
 
 __all__ = [
@@ -39,6 +174,77 @@ __all__ = [
     "mfcc",
     "tonnetz",
 ]
+
+
+# Heuristic crossover for mel projection backend in 2D path.
+# Counts multiply-accumulate ops: n_mels * n_fft_bins * n_frames.
+# Auto-calibrated via  python calibrate_mel_threshold.py  (rewrites this line).
+# 0 = always use NumPy/BLAS (correct for MKL-backed machines after calibration).
+# Set IRON_LIBROSA_MEL_BACKEND=rust env var to force the Rust faer path.
+_MEL_RUST_WORK_THRESHOLD = 201_226_955
+
+
+def _load_external_mel_threshold_registry() -> dict[str, int]:
+    """Load optional per-profile mel thresholds from JSON file."""
+
+    registry_path = os.getenv("IRON_LIBROSA_MEL_THRESHOLD_FILE", "").strip()
+    if not registry_path:
+        return {}
+
+    try:
+        with open(registry_path, "r", encoding="utf-8") as fdesc:
+            data = json.load(fdesc)
+    except Exception:
+        return {}
+
+    # Accept either {"thresholds": {...}} or a flat mapping.
+    if isinstance(data, dict) and isinstance(data.get("thresholds"), dict):
+        data = data["thresholds"]
+
+    if not isinstance(data, dict):
+        return {}
+
+    out: dict[str, int] = {}
+    for key, value in data.items():
+        try:
+            parsed = int(value)
+            if parsed >= 0:
+                out[str(key)] = parsed
+        except (TypeError, ValueError):
+            continue
+
+    return out
+
+
+def _resolve_mel_work_threshold() -> int:
+    """Resolve mel auto-dispatch threshold with cross-CPU profile support.
+
+    Precedence:
+      1) IRON_LIBROSA_MEL_RUST_WORK_THRESHOLD (explicit integer override)
+      2) IRON_LIBROSA_MEL_PROFILE against external JSON registry
+      3) IRON_LIBROSA_MEL_PROFILE against built-in registry
+      4) _MEL_RUST_WORK_THRESHOLD fallback constant
+    """
+
+    env_override = os.getenv("IRON_LIBROSA_MEL_RUST_WORK_THRESHOLD")
+    if env_override is not None:
+        try:
+            parsed = int(env_override.strip())
+            if parsed >= 0:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+
+    profile = os.getenv("IRON_LIBROSA_MEL_PROFILE", "").strip()
+    if profile:
+        external = _load_external_mel_threshold_registry()
+        if profile in external:
+            return external[profile]
+
+        if profile in MEL_WORK_THRESHOLDS:
+            return MEL_WORK_THRESHOLDS[profile]
+
+    return _MEL_RUST_WORK_THRESHOLD
 
 
 # -- Spectral features -- #
@@ -169,14 +375,73 @@ def spectral_centroid(
         raise ParameterError(
             "Spectral centroid is only defined " "with real-valued input"
         )
-    elif np.any(S < 0):
+
+    # Compute the center frequencies of each bin (needed by both paths).
+    if freq is None:
+        freq = fft_frequencies(sr=sr, n_fft=n_fft)
+
+    # Keep 2D variable-frequency validation explicit for clearer errors.
+    if isinstance(freq, np.ndarray) and S.ndim == 2 and freq.ndim == 2 and freq.shape != S.shape:
+        raise ParameterError(
+            f"freq.shape mismatch: expected {S.shape}, found {freq.shape}"
+        )
+
+    # ── Rust fast path ──────────────────────────────────────────────────────
+    # Placed before np.any(S < 0) to avoid an O(n_bins×n_frames) Python scan
+    # on the hot path.  The Rust kernel assumes non-negative magnitudes per
+    # the documented function contract; callers who pass negative values and
+    # need the ParameterError will still get it via the Python fallback below.
+    if (
+        RUST_AVAILABLE
+        and np.isrealobj(S)
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim >= 2
+        and isinstance(freq, np.ndarray)
+        and freq.ndim == 1
+        and freq.dtype == np.float64
+    ):
+        _centroid_name = (
+            "spectral_centroid_f32" if S.dtype == np.float32 else "spectral_centroid_f64"
+        )
+        _centroid_kernel = getattr(_rust_ext, _centroid_name, None)
+
+        if _centroid_kernel is not None:
+            s_flat = np.reshape(
+                np.ascontiguousarray(S), (-1, S.shape[-2], S.shape[-1])
+            )
+            freq_c = np.ascontiguousarray(freq)
+            centroids = [_centroid_kernel(channel, freq_c) for channel in s_flat]
+
+            if S.ndim == 2:
+                return centroids[0]
+
+            return np.stack(centroids, axis=0).reshape(*S.shape[:-2], 1, S.shape[-1])
+
+    # Pilot: variable-frequency fast path for 2-D inputs.
+    if (
+        RUST_AVAILABLE
+        and np.isrealobj(S)
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim == 2
+        and isinstance(freq, np.ndarray)
+        and freq.ndim == 2
+        and freq.shape == S.shape
+        and freq.dtype == np.float64
+    ):
+        _var_name = (
+            "spectral_centroid_variable_freq_f32"
+            if S.dtype == np.float32
+            else "spectral_centroid_variable_freq_f64"
+        )
+        _var_kernel = getattr(_rust_ext, _var_name, None)
+        if _var_kernel is not None:
+            return _var_kernel(np.ascontiguousarray(S), np.ascontiguousarray(freq))
+
+    # ── Python fallback — validate first ────────────────────────────────────
+    if np.any(S < 0):
         raise ParameterError(
             "Spectral centroid is only defined " "with non-negative energies"
         )
-
-    # Compute the center frequencies of each bin
-    if freq is None:
-        freq = fft_frequencies(sr=sr, n_fft=n_fft)
 
     if freq.ndim == 1:
         # reshape for broadcasting
@@ -323,6 +588,47 @@ def spectral_bandwidth(
             "Spectral bandwidth is only defined " "with non-negative energies"
         )
 
+    # Compute the center frequencies of each bin
+    if freq is None:
+        freq = fft_frequencies(sr=sr, n_fft=n_fft)
+
+    # Keep 2D variable-frequency validation explicit for clearer errors.
+    if isinstance(freq, np.ndarray) and S.ndim == 2 and freq.ndim == 2 and freq.shape != S.shape:
+        raise ParameterError(
+            f"freq.shape mismatch: expected {S.shape}, found {freq.shape}"
+        )
+
+    # Rust fused fast path for centroid=None in static 1D frequency bins.
+    if (
+        centroid is None
+        and RUST_AVAILABLE
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim >= 2
+        and isinstance(freq, np.ndarray)
+        and freq.ndim == 1
+        and freq.dtype == np.float64
+    ):
+        _bw_auto_name = (
+            "spectral_bandwidth_auto_centroid_f32"
+            if S.dtype == np.float32
+            else "spectral_bandwidth_auto_centroid_f64"
+        )
+        _bw_auto_kernel = getattr(_rust_ext, _bw_auto_name, None)
+        if _bw_auto_kernel is not None:
+            s_flat = np.reshape(
+                np.ascontiguousarray(S), (-1, S.shape[-2], S.shape[-1])
+            )
+            freq_c = np.ascontiguousarray(freq)
+            bw_frames = [
+                _bw_auto_kernel(channel, freq_c, bool(norm), float(p))
+                for channel in s_flat
+            ]
+
+            if S.ndim == 2:
+                return bw_frames[0]
+
+            return np.stack(bw_frames, axis=0).reshape(*S.shape[:-2], 1, S.shape[-1])
+
     # If we don't have a centroid provided, compute it using the existing
     # spectrogram S
     if centroid is None:
@@ -330,9 +636,38 @@ def spectral_bandwidth(
             y=y, sr=sr, S=S, n_fft=n_fft, hop_length=hop_length, freq=freq
         )
 
-    # Compute the center frequencies of each bin
-    if freq is None:
-        freq = fft_frequencies(sr=sr, n_fft=n_fft)
+
+    # Rust fast path for static 1D frequency bins.
+    if (
+        RUST_AVAILABLE
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim >= 2
+        and isinstance(freq, np.ndarray)
+        and freq.ndim == 1
+        and freq.dtype == np.float64
+        and centroid is not None
+        and centroid.shape[-2:] == (1, S.shape[-1])
+        and centroid.shape[:-2] == S.shape[:-2]
+    ):
+        _bw_name = "spectral_bandwidth_f32" if S.dtype == np.float32 else "spectral_bandwidth_f64"
+        _bw_kernel = getattr(_rust_ext, _bw_name, None)
+        if _bw_kernel is not None:
+            s_flat = np.reshape(
+                np.ascontiguousarray(S), (-1, S.shape[-2], S.shape[-1])
+            )
+            c_flat = np.reshape(
+                np.ascontiguousarray(centroid), (-1, 1, S.shape[-1])
+            )
+            freq_c = np.ascontiguousarray(freq)
+            bw_frames = [
+                _bw_kernel(channel, freq_c, c_channel, bool(norm), float(p))
+                for channel, c_channel in zip(s_flat, c_flat)
+            ]
+
+            if S.ndim == 2:
+                return bw_frames[0]
+
+            return np.stack(bw_frames, axis=0).reshape(*S.shape[:-2], 1, S.shape[-1])
 
     if freq.ndim == 1:
         deviation = np.abs(
@@ -497,6 +832,51 @@ def spectral_contrast(
     valley = np.zeros(shape)
     peak = np.zeros_like(valley)
 
+    # ── Rust fast path for static 1D frequency bins (default case) ──────────
+    # Dispatch per-band kernel if available and workload is large enough to
+    # amortize per-band flatten/reshape overhead.
+    _contrast_channel_count = int(np.prod(S.shape[:-2])) if S.ndim > 2 else 1
+    _contrast_auto_ok = _contrast_rust_auto_ok(
+        _contrast_channel_count, S.shape[-2], S.shape[-1]
+    )
+    _use_rust_contrast = (
+        RUST_AVAILABLE
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim >= 2
+        and (
+            _CONTRAST_RUST_MODE == "rust"
+            or (_CONTRAST_RUST_MODE == "auto" and _contrast_auto_ok)
+        )
+    )
+    _contrast_kernel_f32 = None
+    _contrast_kernel_f64 = None
+    _contrast_fused_kernel = None
+    if _use_rust_contrast:
+        _name = (
+            "spectral_contrast_band_f32"
+            if S.dtype == np.float32
+            else "spectral_contrast_band_f64"
+        )
+        _contrast_kernel = getattr(_rust_ext, _name, None)
+        if _name == "spectral_contrast_band_f32":
+            _contrast_kernel_f32 = _contrast_kernel
+        else:
+            _contrast_kernel_f64 = _contrast_kernel
+        _fused_name = (
+            "spectral_contrast_fused_f32"
+            if S.dtype == np.float32
+            else "spectral_contrast_fused_f64"
+        )
+        _contrast_fused_kernel = getattr(_rust_ext, _fused_name, None)
+        _use_rust_contrast = _contrast_kernel is not None
+
+    _use_fused_contrast = (
+        _use_rust_contrast
+        and _contrast_fused_kernel is not None
+        and _contrast_rust_fused_ok(_contrast_channel_count, S.shape[-2], S.shape[-1])
+    )
+
+    _band_meta = []
     for k, (f_low, f_high) in enumerate(zip(octa[:-1], octa[1:])):
         current_band = np.logical_and(freq >= f_low, freq <= f_high)
 
@@ -508,19 +888,76 @@ def spectral_contrast(
         if k == n_bands:
             current_band[idx[-1] + 1 :] = True
 
-        sub_band = S[..., current_band, :]
-
+        band_idx = np.flatnonzero(current_band)
+        band_start = int(band_idx[0])
+        band_stop = int(band_idx[-1]) + 1
         if k < n_bands:
-            sub_band = sub_band[..., :-1, :]
+            band_stop -= 1
 
-        # Always take at least one bin from each side
-        idx = np.rint(quantile * np.sum(current_band))
-        idx = int(np.maximum(idx, 1))
+        idx_q = int(np.maximum(np.rint(quantile * np.sum(current_band)), 1))
+        _band_meta.append((band_start, band_stop, idx_q))
+
+    if _use_fused_contrast:
+        try:
+            s_flat = np.reshape(
+                np.ascontiguousarray(S), (_contrast_channel_count, S.shape[-2], S.shape[-1])
+            )
+            band_starts = np.asarray([m[0] for m in _band_meta], dtype=np.int64)
+            band_stops = np.asarray([m[1] for m in _band_meta], dtype=np.int64)
+            idx_qs = np.asarray([m[2] for m in _band_meta], dtype=np.int64)
+            peak_flat, valley_flat = _contrast_fused_kernel(s_flat, band_starts, band_stops, idx_qs)
+            peak = np.reshape(peak_flat, shape)
+            valley = np.reshape(valley_flat, shape)
+
+            if linear:
+                contrast = peak - valley
+            else:
+                contrast = power_to_db(peak) - power_to_db(valley)
+            return contrast
+        except Exception:
+            pass
+
+    peak_flat = np.reshape(peak, (_contrast_channel_count, n_bands + 1, S.shape[-1]))
+    valley_flat = np.reshape(valley, (_contrast_channel_count, n_bands + 1, S.shape[-1]))
+
+    for k, (band_start, band_stop, idx_q) in enumerate(_band_meta):
+        sub_band = S[..., band_start:band_stop, :]
+
+        # ── Try Rust kernel for this band ──────────────────────────────────
+        if _use_rust_contrast:
+            try:
+                sub_flat = np.reshape(
+                    np.ascontiguousarray(sub_band), (_contrast_channel_count, sub_band.shape[-2], sub_band.shape[-1])
+                )
+
+                n_sub = sub_flat.shape[-2]
+                # Rust kernel clamps idx <= n_sub-1. Preserve parity by using
+                # Rust only when Python's idx_q lies within that range.
+                if n_sub < 2 or idx_q > (n_sub - 1):
+                    raise RuntimeError("fall back to Python contrast path")
+
+                # Convert quantile -> effective quantile that reproduces idx_q
+                # in the Rust kernel's round(quantile * n_sub) logic.
+                q_eff = idx_q / float(n_sub)
+
+                for ch_idx in range(_contrast_channel_count):
+                    ch = np.ascontiguousarray(sub_flat[ch_idx])
+                    if S.dtype == np.float32:
+                        pk, vl = _contrast_kernel_f32(ch, q_eff)
+                    else:
+                        pk, vl = _contrast_kernel_f64(ch, q_eff)
+                    peak_flat[ch_idx, k, :] = pk[0]
+                    valley_flat[ch_idx, k, :] = vl[0]
+                continue  # Skip to next band
+            except Exception:
+                pass  # Fall through to Python path
+
+        # ── Python fallback ────────────────────────────────────────────────
 
         sortedr = np.sort(sub_band, axis=-2)
 
-        valley[..., k, :] = np.mean(sortedr[..., :idx, :], axis=-2)
-        peak[..., k, :] = np.mean(sortedr[..., -idx:, :], axis=-2)
+        valley[..., k, :] = np.mean(sortedr[..., :idx_q, :], axis=-2)
+        peak[..., k, :] = np.mean(sortedr[..., -idx_q:, :], axis=-2)
 
     contrast: np.ndarray
     if linear:
@@ -659,6 +1096,61 @@ def spectral_rolloff(
     if freq is None:
         freq = fft_frequencies(sr=sr, n_fft=n_fft)
 
+    # Keep 2D variable-frequency validation explicit for clearer errors.
+    if isinstance(freq, np.ndarray) and S.ndim == 2 and freq.ndim == 2 and freq.shape != S.shape:
+        raise ParameterError(
+            f"freq.shape mismatch: expected {S.shape}, found {freq.shape}"
+        )
+
+    # Rust fast path for static 1D frequency bins.
+    if (
+        RUST_AVAILABLE
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim >= 2
+        and isinstance(freq, np.ndarray)
+        and freq.ndim == 1
+        and freq.dtype == np.float64
+    ):
+        _rolloff_name = "spectral_rolloff_f32" if S.dtype == np.float32 else "spectral_rolloff_f64"
+        _rolloff_kernel = getattr(_rust_ext, _rolloff_name, None)
+        if _rolloff_kernel is not None:
+            s_flat = np.reshape(
+                np.ascontiguousarray(S), (-1, S.shape[-2], S.shape[-1])
+            )
+            freq_c = np.ascontiguousarray(freq)
+            roll_frames = [
+                _rolloff_kernel(channel, freq_c, float(roll_percent))
+                for channel in s_flat
+            ]
+
+            if S.ndim == 2:
+                return roll_frames[0]
+
+            return np.stack(roll_frames, axis=0).reshape(*S.shape[:-2], 1, S.shape[-1])
+
+    # Pilot: variable-frequency fast path for 2-D inputs.
+    if (
+        RUST_AVAILABLE
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim == 2
+        and isinstance(freq, np.ndarray)
+        and freq.ndim == 2
+        and freq.shape == S.shape
+        and freq.dtype == np.float64
+    ):
+        _var_name = (
+            "spectral_rolloff_variable_freq_f32"
+            if S.dtype == np.float32
+            else "spectral_rolloff_variable_freq_f64"
+        )
+        _var_kernel = getattr(_rust_ext, _var_name, None)
+        if _var_kernel is not None:
+            return _var_kernel(
+                np.ascontiguousarray(S),
+                np.ascontiguousarray(freq),
+                float(roll_percent),
+            )
+
     # Make sure that frequency can be broadcast
     if freq.ndim == 1:
         # reshape for broadcasting
@@ -791,6 +1283,31 @@ def spectral_flatness(
             "Spectral flatness is only defined " "with non-negative energies"
         )
 
+    # ── Rust fast path ──────────────────────────────────────────────────────
+    # Guard: real, non-negative, 2-D+ float32/float64, 1-D static-freq bin
+    # dimension (S.ndim >= 2 satisfied by _spectrogram contract).
+    if (
+        RUST_AVAILABLE
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim >= 2
+    ):
+        _flat_name = (
+            "spectral_flatness_f32" if S.dtype == np.float32 else "spectral_flatness_f64"
+        )
+        _flat_kernel = getattr(_rust_ext, _flat_name, None)
+
+        if _flat_kernel is not None:
+            s_flat = np.reshape(
+                np.ascontiguousarray(S), (-1, S.shape[-2], S.shape[-1])
+            )
+            results = [_flat_kernel(channel, float(amin), float(power)) for channel in s_flat]
+
+            if S.ndim == 2:
+                return results[0]
+
+            return np.stack(results, axis=0).reshape(*S.shape[:-2], 1, S.shape[-1])
+    # ── Python fallback ─────────────────────────────────────────────────────
+
     S_thresh = np.maximum(amin, S**power)
     gmean = np.exp(np.mean(np.log(S_thresh), axis=-2, keepdims=True))
     amean = np.mean(S_thresh, axis=-2, keepdims=True)
@@ -881,6 +1398,35 @@ def rms(
 
         x = util.frame(y, frame_length=frame_length, hop_length=hop_length)
 
+        target_dtype = np.dtype(dtype)
+        if (
+            _ENABLE_RUST_RMS_TIME
+            and
+            RUST_AVAILABLE
+            and np.isrealobj(x)
+            and target_dtype in (np.float32, np.float64)
+        ):
+            _rms_time_name = (
+                "rms_time_f32" if target_dtype == np.float32 else "rms_time_f64"
+            )
+            _rms_time_kernel = getattr(_rust_ext, _rms_time_name, None)
+
+            if _rms_time_kernel is not None:
+                # Preserve framed stride layout when dtype already matches;
+                # avoid forcing a large contiguous copy on the hot path.
+                x_flat = np.reshape(
+                    np.asarray(x, dtype=target_dtype),
+                    (-1, x.shape[-2], x.shape[-1]),
+                )
+                rms_frames = [_rms_time_kernel(channel) for channel in x_flat]
+
+                if x.ndim == 2:
+                    return rms_frames[0]
+
+                return np.stack(rms_frames, axis=0).reshape(
+                    *x.shape[:-2], 1, x.shape[-1]
+                )
+
         # Calculate power
         power = np.mean(util.abs2(x, dtype=dtype), axis=-2, keepdims=True)
     elif S is not None:
@@ -893,6 +1439,33 @@ def rms(
                     S.shape[-2], S.shape[-2] * 2 - 2, S.shape[-2] * 2 - 1, frame_length
                 )
             )
+
+        # Rust fast path for the real-valued spectrogram path when output dtype
+        # matches the spectrogram precision.
+        target_dtype = np.dtype(dtype)
+        if (
+            RUST_AVAILABLE
+            and np.isrealobj(S)
+            and S.dtype in (np.float32, np.float64)
+            and S.dtype == target_dtype
+        ):
+            _rms_name = (
+                "rms_spectrogram_f32" if S.dtype == np.float32 else "rms_spectrogram_f64"
+            )
+            _rms_kernel = getattr(_rust_ext, _rms_name, None)
+
+            if _rms_kernel is not None:
+                s_flat = np.reshape(
+                    np.ascontiguousarray(S), (-1, S.shape[-2], S.shape[-1])
+                )
+                rms_frames = [_rms_kernel(channel, int(frame_length)) for channel in s_flat]
+
+                if S.ndim == 2:
+                    return rms_frames[0]
+
+                return np.stack(rms_frames, axis=0).reshape(
+                    *S.shape[:-2], 1, S.shape[-1]
+                )
 
         # power spectrogram
         x = util.abs2(S, dtype=dtype)
@@ -942,7 +1515,7 @@ def poly_features(
         hop length for STFT. See `librosa.stft` for details.
     win_length : int <= n_fft [scalar]
         Each frame of audio is windowed by `window()`.
-        The window will be of length `win_length` and then padded
+        The window will be of length ``win_length`` and then padded
         with zeros to match ``n_fft``.
         If unspecified, defaults to ``win_length = n_fft``.
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
@@ -1264,7 +1837,6 @@ def chroma_stft(
         S=S,
         n_fft=n_fft,
         hop_length=hop_length,
-        power=2,
         win_length=win_length,
         window=window,
         center=center,
@@ -1279,8 +1851,35 @@ def chroma_stft(
         sr=sr, n_fft=n_fft, tuning=tuning, n_chroma=n_chroma, **kwargs
     )
 
-    # Compute raw chroma
-    raw_chroma = np.einsum("cf,...ft->...ct", chromafb, S, optimize=True)
+    # Rust fast path for 2-D S with compatible dtype.
+    if (
+        RUST_AVAILABLE
+        and np.isrealobj(S)
+        and S.dtype in (np.float32, np.float64)
+        and S.ndim >= 2
+    ):
+        _chroma_name = (
+            "chroma_project_f32" if S.dtype == np.float32 else "chroma_project_f64"
+        )
+        _chroma_kernel = getattr(_rust_ext, _chroma_name, None)
+
+        if _chroma_kernel is not None:
+            s_flat = np.reshape(
+                np.ascontiguousarray(S), (-1, S.shape[-2], S.shape[-1])
+            )
+            chromafb_c = np.ascontiguousarray(chromafb.astype(S.dtype))
+            chromas = [_chroma_kernel(channel, chromafb_c) for channel in s_flat]
+
+            if S.ndim == 2:
+                raw_chroma = chromas[0]
+            else:
+                raw_chroma = np.stack(chromas, axis=0).reshape(*S.shape[:-2], n_chroma, S.shape[-1])
+        else:
+            # Fallback to Python einsum
+            raw_chroma = np.einsum("cf,...ft->...ct", chromafb, S, optimize=True)
+    else:
+        # Fallback to Python einsum
+        raw_chroma = np.einsum("cf,...ft->...ct", chromafb, S, optimize=True)
 
     # Compute normalization factor for each frame
     return util.normalize(raw_chroma, norm=norm, axis=-2)
@@ -1324,7 +1923,7 @@ def chroma_cqt(
         threshold are discarded, resulting in a sparse chromagram.
     tuning : float [scalar] or None.
         Deviation (in fractions of a CQT bin) from A440 tuning
-    n_chroma : int > 0
+    n_chroma : int > 0 [scalar]
         Number of chroma bins to produce
     n_octaves : int > 0
         Number of octaves to analyze above ``fmin``
@@ -1992,10 +2591,25 @@ def mfcc(
         # multichannel behavior may be different due to relative noise floor differences between channels
         S = power_to_db(melspectrogram(y=y, sr=sr, norm = mel_norm, **kwargs))
 
-    fft = get_fftlib()
-    M: np.ndarray = fft.dct(S, axis=-2, type=dct_type, norm=norm)[
-        ..., :n_mfcc, :
-    ]
+    # Rust fast path for the most common MFCC setting.
+    if (
+        S.ndim == 2
+        and S.dtype in (np.float32, np.float64)
+        and dct_type == 2
+        and norm == "ortho"
+        and RUST_AVAILABLE
+    ):
+        _dct_name = "dct2_ortho_f64" if S.dtype == np.float64 else "dct2_ortho_f32"
+        if hasattr(_rust_ext, _dct_name):
+            M = getattr(_rust_ext, _dct_name)(np.ascontiguousarray(S), int(n_mfcc))
+        else:
+            fft = get_fftlib()
+            M = fft.dct(S, axis=-2, type=dct_type, norm=norm)[..., :n_mfcc, :]
+    else:
+        fft = get_fftlib()
+        M: np.ndarray = fft.dct(S, axis=-2, type=dct_type, norm=norm)[
+            ..., :n_mfcc, :
+        ]
 
     if lifter > 0:
         # shape lifter for broadcasting
@@ -2146,6 +2760,43 @@ def melspectrogram(
 
     # Build a Mel filter
     mel_basis = filters.mel(sr=sr, n_fft=n_fft, **kwargs)
+
+    # Fast path for the common 2D case.
+    # Backend selection is adaptive by workload size, with env overrides:
+    #   IRON_LIBROSA_MEL_BACKEND=numpy|rust|auto (default auto)
+    if S.ndim == 2:
+        n_mels = mel_basis.shape[0]
+        n_fft_bins = mel_basis.shape[1]
+        n_frames = S.shape[1]
+        work = n_mels * n_fft_bins * n_frames
+        mel_threshold = _resolve_mel_work_threshold()
+
+        use_rust = (
+            RUST_AVAILABLE
+            and not FORCE_NUMPY_MEL
+            and (FORCE_RUST_MEL or work <= mel_threshold)
+        )
+
+        if use_rust:
+            if (
+                S.dtype == np.float32
+                and mel_basis.dtype == np.float32
+                and hasattr(_rust_ext, "mel_project_f32")
+            ):
+                return _rust_ext.mel_project_f32(
+                    np.ascontiguousarray(S),
+                    np.ascontiguousarray(mel_basis),
+                )
+
+            if hasattr(_rust_ext, "mel_project_f64"):
+                out = _rust_ext.mel_project_f64(
+                    np.ascontiguousarray(S, dtype=np.float64),
+                    np.ascontiguousarray(mel_basis, dtype=np.float64),
+                )
+                return out.astype(np.result_type(S.dtype, mel_basis.dtype), copy=False)
+
+        # NumPy dot is usually BLAS-backed (MKL/OpenBLAS/Accelerate).
+        return mel_basis.dot(S)
 
     melspec: np.ndarray = np.einsum("...ft,mf->...mt", S, mel_basis, optimize=True)
     return melspec

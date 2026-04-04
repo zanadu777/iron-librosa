@@ -23,6 +23,7 @@ import scipy.stats
 import pytest
 
 from test_core import srand
+from librosa.core import constantq as constantq_mod
 
 
 def __test_cqt_size(
@@ -318,6 +319,36 @@ def test_vqt(
 
         # Check that it matches 110, which is an analysis frequency
         assert np.isclose(peak_frequency, 110)
+
+
+def test_vqt_skips_final_unneeded_downsample(y_cqt_110, sr_cqt, monkeypatch):
+    calls = {"n": 0}
+    original = constantq_mod.audio.resample
+
+    def _counting_resample(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(constantq_mod.audio, "resample", _counting_resample)
+
+    # Clear basis cache counters to avoid cross-test state noise.
+    constantq_mod._vqt_filter_fft_cache_clear()
+
+    librosa.vqt(
+        y=y_cqt_110,
+        sr=sr_cqt,
+        hop_length=512,
+        n_bins=84,
+        bins_per_octave=12,
+        tuning=0,
+        filter_scale=1,
+        norm=1,
+        sparsity=0.01,
+        res_type="polyphase",
+    )
+
+    # 84 bins @ 12 bins/octave -> 7 octaves, so at most 6 recursive downsample calls.
+    assert calls["n"] <= 6
 
 
 @pytest.fixture(scope="module")

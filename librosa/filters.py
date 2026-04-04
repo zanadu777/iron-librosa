@@ -52,12 +52,14 @@ import scipy.ndimage
 from numba import jit
 
 from ._cache import cache
+from ._rust_bridge import _rust_ext, RUST_AVAILABLE
 from . import util
 from .util.exceptions import ParameterError
 from .util.decorators import deprecated
 
 from .core.convert import note_to_hz, hz_to_midi, midi_to_hz, hz_to_octs
 from .core.convert import fft_frequencies, mel_frequencies
+from ._rust_bridge import _rust_ext, RUST_AVAILABLE
 from numpy.typing import ArrayLike, DTypeLike
 from typing import Any, List, Optional, Tuple, Union
 from typing_extensions import Literal
@@ -217,6 +219,24 @@ def mel(
     if fmax is None:
         fmax = float(sr) / 2
 
+    # Rust fast path for common mel basis construction settings.
+    # Keep Python fallback for all non-f32 / numeric-norm cases to preserve behavior.
+    if (
+        RUST_AVAILABLE
+        and hasattr(_rust_ext, "mel_filter_f32")
+        and np.dtype(dtype) == np.float32
+        and (norm is None or norm == "slaney")
+    ):
+        return _rust_ext.mel_filter_f32(
+            float(sr),
+            int(n_fft),
+            int(n_mels),
+            float(fmin),
+            float(fmax),
+            bool(htk),
+            bool(norm == "slaney"),
+        )
+
     # Initialize the weights
     n_mels = int(n_mels)
     weights = np.zeros((n_mels, int(1 + n_fft // 2)), dtype=dtype)
@@ -363,6 +383,43 @@ def chroma(
     >>> ax.set(ylabel='Chroma filter', title='Chroma filter bank')
     >>> fig.colorbar(img, ax=ax)
     """
+    dtype_obj = np.dtype(dtype)
+
+    # Rust fast path for norm=2, 1, None, inf cases
+    if (
+        RUST_AVAILABLE
+        and dtype_obj in (np.float32, np.float64)
+        and norm in (None, 1, 2, np.inf)
+        and sr > 0
+        and n_fft >= 2
+        and n_chroma > 0
+    ):
+        # Map norm to Rust code (2=L2, 1=L1, None=0, inf=999)
+        norm_code = None
+        if norm == 2:
+            norm_code = 2
+        elif norm == 1:
+            norm_code = 1
+        elif norm is None:
+            norm_code = None
+        elif norm == np.inf:
+            norm_code = 999
+
+        if norm_code is not None or norm is None:
+            _kernel_name = "chroma_filter_f32" if dtype_obj == np.float32 else "chroma_filter_f64"
+            _kernel = getattr(_rust_ext, _kernel_name, None)
+            if _kernel is not None:
+                return _kernel(
+                    float(sr),
+                    int(n_fft),
+                    int(n_chroma),
+                    float(tuning),
+                    float(ctroct),
+                    None if octwidth is None else float(octwidth),
+                    bool(base_c),
+                    norm_code,
+                )
+
     wts = np.zeros((n_chroma, n_fft))
 
     # Get the FFT bins, not counting the DC component
@@ -404,7 +461,7 @@ def chroma(
         wts = np.roll(wts, -3 * (n_chroma // 12), axis=0)
 
     # remove aliasing columns, copy to ensure row-contiguity
-    return np.ascontiguousarray(wts[:, : int(1 + n_fft / 2)], dtype=dtype)
+    return np.ascontiguousarray(wts[:, : int(1 + n_fft / 2)], dtype=dtype_obj)
 
 
 def __float_window(window_spec):
@@ -415,7 +472,7 @@ def __float_window(window_spec):
     1. ``__float_window(window_function)(x)`` has length ``np.ceil(x)``
     2. all values from ``np.floor(x)`` are set to 0.
 
-    For integer-valued ``x``, there should be no change in behavior.
+    For integer-valued ``x``; there should be no change in behavior.
     """
     def _wrap(n, *args, **kwargs):
         """Wrap the window"""

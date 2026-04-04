@@ -1,0 +1,242 @@
+﻿========================================================================
+Phase 5 kickoff benchmark (rolloff + bandwidth)
+Rust available: True
+========================================================================
+
+========================================================================
+Section 1: raw spectral_rolloff kernel
+========================================================================
+
+case: n_fft=1024, bins=513, frames=300
+  numpy                    avg=   0.000 ms  min=   0.926 ms
+  rust f32                 avg=   0.000 ms  min=   0.209 ms
+  rust f64                 avg=   0.000 ms  min=   0.220 ms
+  speedup f32 (min)          4.43x
+
+case: n_fft=2048, bins=1025, frames=800
+  numpy                    avg=   0.000 ms  min=   4.969 ms
+  rust f32                 avg=   0.000 ms  min=   0.128 ms
+  rust f64                 avg=   0.000 ms  min=   0.130 ms
+  speedup f32 (min)         38.94x
+
+case: n_fft=4096, bins=2049, frames=1200
+  numpy                    avg=   0.000 ms  min=  20.060 ms
+  rust f32                 avg=   0.000 ms  min=   0.285 ms
+  rust f64                 avg=   0.000 ms  min=   0.421 ms
+  speedup f32 (min)         70.31x
+
+========================================================================
+Section 2: raw spectral_bandwidth kernel
+========================================================================
+
+case: n_fft=1024, bins=513, frames=300
+  numpy                    avg=   0.000 ms  min=   3.265 ms
+  rust f32 (manual)        avg=   0.000 ms  min=   0.244 ms
+  rust f32 (auto)          avg=   0.000 ms  min=   0.245 ms
+  rust f64                 avg=   0.000 ms  min=   0.242 ms
+  speedup f32 manual        13.40x
+  speedup f32 auto          13.32x
+
+case: n_fft=2048, bins=1025, frames=800
+  numpy                    avg=   0.000 ms  min=  18.823 ms
+  rust f32 (manual)        avg=   0.000 ms  min=   1.437 ms
+  rust f32 (auto)          avg=   0.000 ms  min=   1.395 ms
+  rust f64                 avg=   0.000 ms  min=   1.328 ms
+  speedup f32 manual        13.10x
+  speedup f32 auto          13.49x
+
+case: n_fft=4096, bins=2049, frames=1200
+  numpy                    avg=   0.000 ms  min=  64.462 ms
+  rust f32 (manual)        avg=   0.000 ms  min=   4.123 ms
+  rust f32 (auto)          avg=   0.000 ms  min=   4.026 ms
+  rust f64                 avg=   0.000 ms  min=   4.189 ms
+  speedup f32 manual        15.64x
+  speedup f32 auto          16.01x
+
+========================================================================
+Section 3: public API rolloff/bandwidth (auto vs provided centroid)
+========================================================================
+
+case: n_fft=1024, frames=300
+  rolloff librosa          avg=   0.292 ms  min=   0.255 ms
+  rolloff iron             avg=   0.264 ms  min=   0.234 ms
+  bandwidth librosa (auto) avg=   0.337 ms  min=   0.316 ms
+  bandwidth iron (auto)    avg=   0.306 ms  min=   0.286 ms
+  bandwidth librosa (provided c) avg=   0.335 ms  min=   0.320 ms
+  bandwidth iron (provided c) avg=   0.331 ms  min=   0.321 ms
+
+case: n_fft=2048, frames=800
+  rolloff librosa          avg=   0.437 ms  min=   0.370 ms
+  rolloff iron             avg=   0.389 ms  min=   0.356 ms
+  bandwidth librosa (auto) avg=   1.514 ms  min=   1.388 ms
+  bandwidth iron (auto)    avg=   1.486 ms  min=   1.405 ms
+  bandwidth librosa (provided c) avg=   1.439 ms  min=   1.398 ms
+  bandwidth iron (provided c) avg=   1.420 ms  min=   1.390 ms
+
+case: n_fft=4096, frames=1200
+  rolloff librosa          avg=   1.297 ms  min=   1.044 ms
+  rolloff iron             avg=   1.354 ms  min=   1.036 ms
+  bandwidth librosa (auto) avg=   5.071 ms  min=   4.484 ms
+  bandwidth iron (auto)    avg=   4.997 ms  min=   4.574 ms
+  bandwidth librosa (provided c) avg=   4.773 ms  min=   4.509 ms
+  bandwidth iron (provided c) avg=   4.634 ms  min=   4.451 ms
+
+========================================================================
+Section 4: public API Rust vs forced Python fallback
+========================================================================
+
+case: n_fft=1024, frames=300
+  rolloff rust on          avg=   0.240 ms  min=   0.230 ms
+  rolloff forced py        avg=   1.059 ms  min=   0.976 ms
+  speedup rolloff             4.25x
+  bandwidth auto rust      avg=   0.300 ms  min=   0.279 ms
+  bandwidth auto py        avg=   3.801 ms  min=   3.262 ms
+  speedup bw auto            11.68x
+  bandwidth prov rust      avg=   0.303 ms  min=   0.280 ms
+  bandwidth prov py        avg=   2.327 ms  min=   2.085 ms
+  speedup bw provided         7.43x
+
+case: n_fft=2048, frames=800
+  rolloff rust on          avg=   0.457 ms  min=   0.381 ms
+  rolloff forced py        avg=   6.045 ms  min=   5.482 ms
+  speedup rolloff            14.39x
+  bandwidth auto rust      avg=   1.502 ms  min=   1.430 ms
+  bandwidth auto py        avg=  20.032 ms  min=  18.540 ms
+  speedup bw auto            12.97x
+  bandwidth prov rust      avg=   1.402 ms  min=   1.376 ms
+  bandwidth prov py        avg=  11.605 ms  min=  10.511 ms
+  speedup bw provided         7.64x
+
+case: n_fft=4096, frames=1200
+  rolloff rust on          avg=   1.109 ms  min=   0.927 ms
+  rolloff forced py        avg=  23.019 ms  min=  21.311 ms
+  speedup rolloff            23.00x
+  bandwidth auto rust      avg=   5.338 ms  min=   4.722 ms
+  bandwidth auto py        avg=  69.005 ms  min=  65.944 ms
+  speedup bw auto            13.97x
+  bandwidth prov rust      avg=   5.162 ms  min=   4.759 ms
+  bandwidth prov py        avg=  43.707 ms  min=  40.010 ms
+  speedup bw provided         8.41x
+
+========================================================================
+Section 5: public API rms(y=...) Rust vs forced Python fallback
+========================================================================
+
+case: frame_length=1024, hop_length=512, samples=154112
+  rms(y) rust on           avg=   0.392 ms  min=   0.322 ms
+  rms(y) forced py         avg=   0.653 ms  min=   0.431 ms
+  speedup rms(y)              1.34x
+
+case: frame_length=2048, hop_length=512, samples=411136
+  rms(y) rust on           avg=   0.711 ms  min=   0.597 ms
+  rms(y) forced py         avg=   2.224 ms  min=   1.850 ms
+  speedup rms(y)              3.10x
+
+case: frame_length=4096, hop_length=512, samples=617984
+  rms(y) rust on           avg=   1.016 ms  min=   0.853 ms
+  rms(y) forced py         avg=   8.059 ms  min=   7.176 ms
+  speedup rms(y)              8.41x
+
+========================================================================
+Section 6: public API spectral_flatness Rust vs forced Python fallback
+========================================================================
+
+case: n_fft=1024, bins=513, frames=300
+  flatness rust (p=2)      avg=   0.778 ms  min=   0.739 ms
+  flatness py   (p=2)      avg=   0.847 ms  min=   0.709 ms
+  speedup p=2                 0.96x
+  flatness rust (p=1)      avg=   0.831 ms  min=   0.792 ms
+  flatness py   (p=1)      avg=   0.867 ms  min=   0.701 ms
+  speedup p=1                 0.88x
+
+case: n_fft=2048, bins=1025, frames=800
+  flatness rust (p=2)      avg=   0.641 ms  min=   0.508 ms
+  flatness py   (p=2)      avg=   4.243 ms  min=   3.659 ms
+  speedup p=2                 7.20x
+  flatness rust (p=1)      avg=   0.484 ms  min=   0.455 ms
+  flatness py   (p=1)      avg=   5.132 ms  min=   3.580 ms
+  speedup p=1                 7.86x
+
+case: n_fft=4096, bins=2049, frames=1200
+  flatness rust (p=2)      avg=   1.580 ms  min=   1.381 ms
+  flatness py   (p=2)      avg=  13.344 ms  min=  12.167 ms
+  speedup p=2                 8.81x
+  flatness rust (p=1)      avg=   1.531 ms  min=   1.258 ms
+  flatness py   (p=1)      avg=  12.600 ms  min=  12.008 ms
+  speedup p=1                 9.55x
+
+========================================================================
+Section 7: public API spectral_contrast Rust vs forced Python fallback
+========================================================================
+
+case: mono, n_fft=1024, bins=513, frames=300
+  contrast rust (q=0.02)   avg=   0.833 ms  min=   0.774 ms
+  contrast py   (q=0.02)   avg=   0.853 ms  min=   0.767 ms
+  speedup q=0.02              0.99x
+  contrast rust (q=0.01)   avg=   0.881 ms  min=   0.783 ms
+  contrast py   (q=0.01)   avg=   0.871 ms  min=   0.765 ms
+  speedup q=0.01              0.98x
+
+case: stereo, n_fft=1024, bins=513, frames=300
+  contrast rust (q=0.02)   avg=   1.486 ms  min=   1.296 ms
+  contrast py   (q=0.02)   avg=   1.563 ms  min=   1.300 ms
+  speedup q=0.02              1.00x
+  contrast rust (q=0.01)   avg=   1.869 ms  min=   1.404 ms
+  contrast py   (q=0.01)   avg=   1.556 ms  min=   1.310 ms
+  speedup q=0.01              0.93x
+
+case: quad, n_fft=1024, bins=513, frames=300
+  contrast rust (q=0.02)   avg=   3.370 ms  min=   2.842 ms
+  contrast py   (q=0.02)   avg=   2.755 ms  min=   2.607 ms
+  speedup q=0.02              0.92x
+  contrast rust (q=0.01)   avg=   2.865 ms  min=   2.658 ms
+  contrast py   (q=0.01)   avg=   2.827 ms  min=   2.636 ms
+  speedup q=0.01              0.99x
+
+case: mono, n_fft=2048, bins=1025, frames=800
+  contrast rust (q=0.02)   avg=   3.936 ms  min=   3.492 ms
+  contrast py   (q=0.02)   avg=   3.718 ms  min=   3.535 ms
+  speedup q=0.02              1.01x
+  contrast rust (q=0.01)   avg=   4.044 ms  min=   3.544 ms
+  contrast py   (q=0.01)   avg=   3.847 ms  min=   3.552 ms
+  speedup q=0.01              1.00x
+
+case: stereo, n_fft=2048, bins=1025, frames=800
+  contrast rust (q=0.02)   avg=   7.545 ms  min=   7.253 ms
+  contrast py   (q=0.02)   avg=   7.746 ms  min=   7.025 ms
+  speedup q=0.02              0.97x
+  contrast rust (q=0.01)   avg=   7.352 ms  min=   6.810 ms
+  contrast py   (q=0.01)   avg=   7.655 ms  min=   6.936 ms
+  speedup q=0.01              1.02x
+
+case: quad, n_fft=2048, bins=1025, frames=800
+  contrast rust (q=0.02)   avg=  13.616 ms  min=  13.290 ms
+  contrast py   (q=0.02)   avg=  14.495 ms  min=  13.813 ms
+  speedup q=0.02              1.04x
+  contrast rust (q=0.01)   avg=  13.445 ms  min=  13.196 ms
+  contrast py   (q=0.01)   avg=  16.249 ms  min=  14.442 ms
+  speedup q=0.01              1.09x
+
+case: mono, n_fft=4096, bins=2049, frames=1200
+  contrast rust (q=0.02)   avg=   8.328 ms  min=   7.607 ms
+  contrast py   (q=0.02)   avg=  11.950 ms  min=  11.340 ms
+  speedup q=0.02              1.49x
+  contrast rust (q=0.01)   avg=   7.052 ms  min=   6.662 ms
+  contrast py   (q=0.01)   avg=  12.207 ms  min=  11.699 ms
+  speedup q=0.01              1.76x
+
+case: stereo, n_fft=4096, bins=2049, frames=1200
+  contrast rust (q=0.02)   avg=  24.093 ms  min=  22.844 ms
+  contrast py   (q=0.02)   avg=  23.533 ms  min=  22.874 ms
+  speedup q=0.02              1.00x
+  contrast rust (q=0.01)   avg=  22.830 ms  min=  22.327 ms
+  contrast py   (q=0.01)   avg=  27.196 ms  min=  22.574 ms
+  speedup q=0.01              1.01x
+
+case: quad, n_fft=4096, bins=2049, frames=1200
+  contrast rust (q=0.02)   avg=  45.036 ms  min=  40.753 ms
+  contrast py   (q=0.02)   avg=  77.013 ms  min=  66.161 ms
+  speedup q=0.02              1.62x
+  contrast rust (q=0.01)   avg=  68.463 ms  min=  48.821 ms
+  contrast py   (q=0.01)   avg=  64.923 ms  min=  58.143 ms
+  speedup q=0.01              1.19x

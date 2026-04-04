@@ -572,3 +572,40 @@ def test_diagonal_filter(n, window, angle, slope, zero_mean):
         )
 
     assert np.allclose(k2, kernel.T)
+
+
+@pytest.mark.parametrize("htk", [False, True])
+@pytest.mark.parametrize("norm", [None, "slaney"])
+def test_mel_fastpath_parity_against_float64_fallback(htk, norm):
+    sr = 22050
+    n_fft = 2048
+    n_mels = 96
+    fmin = 30.0
+    fmax = 8000.0
+
+    # float32 path may dispatch to Rust fast path
+    m32 = librosa.filters.mel(
+        sr=sr,
+        n_fft=n_fft,
+        n_mels=n_mels,
+        fmin=fmin,
+        fmax=fmax,
+        htk=htk,
+        norm=norm,
+        dtype=np.float32,
+    )
+
+    # float64 path always uses Python fallback
+    m64 = librosa.filters.mel(
+        sr=sr,
+        n_fft=n_fft,
+        n_mels=n_mels,
+        fmin=fmin,
+        fmax=fmax,
+        htk=htk,
+        norm=norm,
+        dtype=np.float64,
+    )
+
+    assert m32.shape == m64.shape
+    np.testing.assert_allclose(m32.astype(np.float64), m64, rtol=1e-5, atol=1e-6)

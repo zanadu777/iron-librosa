@@ -1,0 +1,28 @@
+[package]
+name = "iron-librosa"
+version = "0.11.0"
+edition = "2021"
+description = "Rust acceleration layer for iron-librosa (drop-in replacement for librosa)"
+license = "ISC"
+
+[lib]
+name = "_rust"
+# cdylib = Python extension (.pyd on Windows, .so on Linux/macOS)
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+ndarray = { version = "0.16", features = ["rayon"] }
+rayon = "1"
+# faer: SIMD-vectorised, cache-blocked GEMM – no external BLAS required.
+# Par::rayon(0) delegates to the same Rayon thread-pool used by ndarray,
+# so there is no thread-pool contention with NumPy's MKL.
+faer = { version = "0.24.0", default-features = false, features = ["rayon"] }
+rustfft = "6.4.1"
+
+[profile.release]
+# Optimise heavily for release builds; debug info adds no value in .pyd files.
+lto = true
+codegen-units = 1
+opt-level = 3

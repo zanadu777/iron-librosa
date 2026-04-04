@@ -1,0 +1,11 @@
+﻿========================================================================
+Phase 12 CQT/VQT benchmark
+========================================================================
+cqt  mono-10s     shape=(84, 431)        avg=  25.056 ms min=  24.982 ms
+vqt  mono-10s     shape=(84, 431)        avg=  24.227 ms min=  23.580 ms
+cqt  stereo-10s   shape=(2, 84, 431)     avg=  30.202 ms min=  29.962 ms
+vqt  stereo-10s   shape=(2, 84, 431)     avg=  28.950 ms min=  28.265 ms
+cqt  mono-30s     shape=(84, 1292)       avg=  34.115 ms min=  32.854 ms
+vqt  mono-30s     shape=(84, 1292)       avg=  34.617 ms min=  32.318 ms
+cqt  stereo-30s   shape=(2, 84, 1292)    avg=  54.582 ms min=  54.050 ms
+vqt  stereo-30s   shape=(2, 84, 1292)    avg=  46.013 ms min=  45.471 ms

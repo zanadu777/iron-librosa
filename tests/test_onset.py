@@ -17,7 +17,10 @@ except KeyError:
 import warnings
 
 import numpy as np
+import scipy
 import librosa
+import librosa.onset as onset_mod
+from librosa._rust_bridge import RUST_AVAILABLE, _rust_ext
 
 from test_core import srand
 
@@ -355,6 +358,209 @@ def test_onset_strength_multi_ref():
     assert np.allclose(onsets[:, 1:], S[:, 1:])
 
 
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_f32")),
+    reason="Rust onset kernel is not available",
+)
+def test_onset_strength_multi_rust_flux_mean_parity(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(128, 200)).astype(np.float32)
+
+    odf_rust = librosa.onset.onset_strength_multi(
+        S=S, lag=2, max_size=1, aggregate=np.mean, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S, lag=2, max_size=1, aggregate=np.mean, center=False
+    )
+
+    assert np.allclose(odf_rust, odf_numpy)
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_f32")),
+    reason="Rust onset kernel is not available",
+)
+def test_onset_strength_multi_rust_fallback_on_nonmean(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(64, 100)).astype(np.float32)
+
+    odf_default = librosa.onset.onset_strength_multi(
+        S=S, lag=1, max_size=1, aggregate=np.max, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S, lag=1, max_size=1, aggregate=np.max, center=False
+    )
+
+    assert np.allclose(odf_default, odf_numpy)
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_f32")),
+    reason="Rust onset kernel is not available",
+)
+def test_onset_strength_rust_wrapper_parity(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(96, 180)).astype(np.float32)
+
+    oenv_rust = librosa.onset.onset_strength(S=S, lag=3, max_size=1, center=True)
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    oenv_numpy = librosa.onset.onset_strength(S=S, lag=3, max_size=1, center=True)
+
+    assert np.allclose(oenv_rust, oenv_numpy)
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_f64")),
+    reason="Rust onset float64 kernel is not available",
+)
+def test_onset_strength_multi_rust_flux_mean_f64_parity(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(96, 180)).astype(np.float64)
+
+    odf_rust = librosa.onset.onset_strength_multi(
+        S=S, lag=2, max_size=1, aggregate=np.mean, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S, lag=2, max_size=1, aggregate=np.mean, center=False
+    )
+
+    assert np.allclose(odf_rust, odf_numpy)
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_ref_f64")),
+    reason="Rust onset float64 reference kernel is not available",
+)
+def test_onset_strength_multi_rust_ref_f64_parity(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(72, 140)).astype(np.float64)
+    ref = scipy.ndimage.maximum_filter1d(S, 3, axis=-2)
+
+    odf_rust = librosa.onset.onset_strength_multi(
+        S=S, lag=3, max_size=1, ref=ref, aggregate=np.mean, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S, lag=3, max_size=1, ref=ref, aggregate=np.mean, center=False
+    )
+
+    assert np.allclose(odf_rust, odf_numpy)
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_maxfilter_f32")),
+    reason="Rust onset max-filter kernel is not available",
+)
+def test_onset_strength_rust_wrapper_maxfilter_parity(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(84, 160)).astype(np.float32)
+
+    oenv_rust = librosa.onset.onset_strength(
+        S=S, lag=2, max_size=5, aggregate=np.mean, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    oenv_numpy = librosa.onset.onset_strength(
+        S=S, lag=2, max_size=5, aggregate=np.mean, center=False
+    )
+
+    assert np.allclose(oenv_rust, oenv_numpy)
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_maxfilter_f64")),
+    reason="Rust onset float64 max-filter kernel is not available",
+)
+def test_onset_strength_rust_wrapper_maxfilter_f64_parity(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(84, 160)).astype(np.float64)
+
+    oenv_rust = librosa.onset.onset_strength(
+        S=S, lag=2, max_size=9, aggregate=np.mean, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    oenv_numpy = librosa.onset.onset_strength(
+        S=S, lag=2, max_size=9, aggregate=np.mean, center=False
+    )
+
+    assert np.allclose(oenv_rust, oenv_numpy)
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.float32])
+@pytest.mark.parametrize("lag", [1, 2])
+def test_onset_strength_multi_fallback_shape_parity(dtype, lag, monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(32, 90)).astype(dtype)
+
+    odf_default = librosa.onset.onset_strength_multi(
+        S=S,
+        lag=lag,
+        max_size=2,
+        aggregate=np.mean,
+        center=False,
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S,
+        lag=lag,
+        max_size=2,
+        aggregate=np.mean,
+        center=False,
+    )
+
+    assert np.allclose(odf_default, odf_numpy)
+
+
+@pytest.mark.parametrize("with_ref", [False, True])
+def test_onset_strength_multi_fallback_ref_channels_parity(with_ref, monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(40, 75)).astype(np.float32)
+    channels = [0, 10, 20, 40]
+    ref = S.copy() if with_ref else None
+
+    odf_default = librosa.onset.onset_strength_multi(
+        S=S,
+        lag=1,
+        max_size=1,
+        ref=ref,
+        aggregate=np.mean,
+        channels=channels,
+        center=False,
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S,
+        lag=1,
+        max_size=1,
+        ref=ref,
+        aggregate=np.mean,
+        channels=channels,
+        center=False,
+    )
+
+    assert np.allclose(odf_default, odf_numpy)
+
+
 def test_onset_detect_inplace_normalize():
 
     # This test will fail if the in-place normalization modifies
@@ -366,3 +572,49 @@ def test_onset_detect_inplace_normalize():
     librosa.onset.onset_detect(onset_envelope=oenv_in, normalize=True)
 
     assert np.allclose(oenv_in, oenv_orig) and oenv_in is not oenv_orig
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_ref_f32")),
+    reason="Rust onset reference kernel is not available",
+)
+@pytest.mark.parametrize("lag", [1, 3])
+@pytest.mark.parametrize("max_size", [2, 5])
+def test_onset_strength_multi_rust_maxfilter_ref_parity(monkeypatch, lag, max_size):
+    srand()
+
+    S = np.abs(np.random.randn(72, 140)).astype(np.float32)
+
+    odf_rust = librosa.onset.onset_strength_multi(
+        S=S, lag=lag, max_size=max_size, aggregate=np.mean, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S, lag=lag, max_size=max_size, aggregate=np.mean, center=False
+    )
+
+    assert np.allclose(odf_rust, odf_numpy)
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_ref_f32")),
+    reason="Rust onset reference kernel is not available",
+)
+def test_onset_strength_multi_rust_explicit_ref_parity(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(48, 120)).astype(np.float32)
+    ref = scipy.ndimage.maximum_filter1d(S, 3, axis=-2)
+
+    odf_rust = librosa.onset.onset_strength_multi(
+        S=S, lag=2, max_size=1, ref=ref, aggregate=np.mean, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S, lag=2, max_size=1, ref=ref, aggregate=np.mean, center=False
+    )
+
+    assert np.allclose(odf_rust, odf_numpy)
+

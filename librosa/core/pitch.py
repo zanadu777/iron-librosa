@@ -3,6 +3,7 @@
 """Pitch-tracking and tuning estimation"""
 
 import warnings
+import os
 import numpy as np
 import scipy
 import numba
@@ -14,6 +15,7 @@ from . import audio
 from .._cache import cache
 from .. import util
 from .. import sequence
+from .._rust_bridge import _rust_ext, RUST_AVAILABLE
 from ..util import Deprecated
 from ..util.exceptions import ParameterError
 from numpy.typing import ArrayLike
@@ -21,6 +23,32 @@ from typing import Any, Callable, Optional, Tuple, Union
 from .._typing import _WindowSpec, _PadMode, _PadModeSTFT
 
 __all__ = ["estimate_tuning", "pitch_tuning", "piptrack", "yin", "pyin"]
+
+
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    """Parse non-negative integer env settings with safe fallback."""
+
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+
+    if value < minimum:
+        return default
+
+    return value
+
+
+# The current Rust tuning post-processing path is experimental.
+# Keep disabled by default until it beats the Python/NumPy baseline.
+_ENABLE_RUST_TUNING = os.getenv("IRON_LIBROSA_ENABLE_RUST_TUNING", "0").strip() in {"1", "true", "yes"}
+_RUST_TUNING_MIN_WORK = _env_int("IRON_LIBROSA_RUST_TUNING_MIN_WORK", 500000)
+_PIPTRACK_RUST_MODE = os.getenv("IRON_LIBROSA_PIPTRACK_RUST_MODE", "auto").strip().lower()
+_PIPTRACK_RUST_MIN_WORK = _env_int("IRON_LIBROSA_PIPTRACK_RUST_MIN_WORK", 500000)
 
 
 def estimate_tuning(
@@ -91,6 +119,32 @@ def estimate_tuning(
     -0.08000000000000002
     """
     pitch, mag = piptrack(y=y, sr=sr, S=S, n_fft=n_fft, **kwargs)
+
+    # Rust fast path for piptrack post-processing (threshold + histogram vote).
+    if (
+        _ENABLE_RUST_TUNING
+        and RUST_AVAILABLE
+        and pitch.size >= _RUST_TUNING_MIN_WORK
+        and pitch.dtype in (np.float32, np.float64)
+        and mag.dtype == pitch.dtype
+        and np.isrealobj(pitch)
+        and np.isrealobj(mag)
+    ):
+        _kernel_name = (
+            "estimate_tuning_from_piptrack_f32"
+            if pitch.dtype == np.float32
+            else "estimate_tuning_from_piptrack_f64"
+        )
+        _kernel = getattr(_rust_ext, _kernel_name, None)
+        if _kernel is not None:
+            return float(
+                _kernel(
+                    pitch,
+                    mag,
+                    float(resolution),
+                    int(bins_per_octave),
+                )
+            )
 
     # Only count magnitude where frequency is > 0
     pitch_mask = pitch > 0
@@ -352,6 +406,82 @@ def piptrack(
     else:
         ref_value = np.abs(ref)
 
+    _piptrack_channel_count = int(np.prod(S.shape[:-2])) if S.ndim > 2 else 1
+    _piptrack_work = _piptrack_channel_count * S.shape[-2] * S.shape[-1]
+    _use_rust_piptrack = (
+        RUST_AVAILABLE
+        and S.dtype in (np.float32, np.float64)
+        and shift.dtype == S.dtype
+        and dskew.dtype == S.dtype
+        and np.isrealobj(S)
+        and np.isrealobj(shift)
+        and np.isrealobj(dskew)
+        and (
+            _PIPTRACK_RUST_MODE == "rust"
+            or (_PIPTRACK_RUST_MODE == "auto" and _piptrack_work >= _PIPTRACK_RUST_MIN_WORK)
+        )
+    )
+
+    if _use_rust_piptrack:
+        _kernel_name = (
+            "piptrack_from_spectrogram_f32"
+            if S.dtype == np.float32
+            else "piptrack_from_spectrogram_f64"
+        )
+        _kernel = getattr(_rust_ext, _kernel_name, None)
+        if _kernel is not None:
+            start_bin = int(np.searchsorted(fft_freqs, fmin, side="left"))
+            stop_bin = int(np.searchsorted(fft_freqs, fmax, side="left"))
+
+            if np.isscalar(ref_value):
+                ref_flat = np.full(
+                    (_piptrack_channel_count, S.shape[-1]),
+                    np.abs(ref_value),
+                    dtype=S.dtype,
+                )
+            elif isinstance(ref_value, np.ndarray) and ref_value.dtype == S.dtype:
+                ref_flat = np.reshape(
+                    np.ascontiguousarray(np.squeeze(ref_value, axis=-2)),
+                    (_piptrack_channel_count, S.shape[-1]),
+                )
+            else:
+                ref_flat = None
+
+            if ref_flat is not None:
+                s_flat = np.reshape(
+                    np.ascontiguousarray(S), (_piptrack_channel_count, S.shape[-2], S.shape[-1])
+                )
+                shift_flat = np.reshape(
+                    np.ascontiguousarray(shift), (_piptrack_channel_count, S.shape[-2], S.shape[-1])
+                )
+                dskew_flat = np.reshape(
+                    np.ascontiguousarray(dskew), (_piptrack_channel_count, S.shape[-2], S.shape[-1])
+                )
+
+                pitch_rows = []
+                mag_rows = []
+                sr_over_nfft = S.dtype.type(float(sr) / n_fft)
+                for ch_idx in range(_piptrack_channel_count):
+                    ch_pitch, ch_mag = _kernel(
+                        s_flat[ch_idx],
+                        shift_flat[ch_idx],
+                        dskew_flat[ch_idx],
+                        ref_flat[ch_idx],
+                        int(start_bin),
+                        int(stop_bin),
+                        sr_over_nfft,
+                    )
+                    pitch_rows.append(ch_pitch)
+                    mag_rows.append(ch_mag)
+
+                if S.ndim == 2:
+                    return pitch_rows[0], mag_rows[0]
+
+                return (
+                    np.stack(pitch_rows, axis=0).reshape(S.shape),
+                    np.stack(mag_rows, axis=0).reshape(S.shape),
+                )
+
     # Store pitch and magnitude
     idx = np.nonzero(freq_mask & util.localmax(S * (S > ref_value), axis=-2))
     pitches[idx] = (idx[-2] + shift[idx]) * float(sr) / n_fft
@@ -387,29 +517,30 @@ def _cumulative_mean_normalized_difference(
     """
     acf_frames = audio.autocorrelate(y_frames, max_size=max_period + 1, axis=-2)
 
-    # Energy terms.
-    yin_frames = np.square(y_frames)
-    np.cumsum(yin_frames, out=yin_frames, axis=-2)
+    # Restrict energy-prefix work to k <= max_period instead of full frame_length.
+    # This reduces allocations and cumulative-sum work for typical YIN settings where
+    # max_period << frame_length.
+    energy_prefix = np.square(y_frames[..., :max_period, :])
+    np.cumsum(energy_prefix, out=energy_prefix, axis=-2)
 
-    # Difference function: d(k) = 2 * (ACF(0) - ACF(k)) - sum_{m=0}^{k-1} y(m)^2
-    k = slice(1, max_period + 1)
-    yin_frames[..., 0, :] = 0
-    yin_frames[..., k, :] = (
-        2 * (acf_frames[..., 0:1, :] - acf_frames[..., k, :]) - yin_frames[..., :k.stop-1, :]
+    # Difference function for k in [1, max_period], stored densely at index k-1.
+    diff = (
+        2 * (acf_frames[..., 0:1, :] - acf_frames[..., 1 : max_period + 1, :])
+        - energy_prefix
     )
 
     # Cumulative mean normalized difference function.
-    yin_numerator = yin_frames[..., min_period : max_period + 1, :]
-    # broadcast this shape to have leading ones
-    k_range = util.expand_to(np.r_[k], ndim=yin_frames.ndim, axes=-2)
+    cumulative_mean = np.cumsum(diff, axis=-2)
+    k_range = util.expand_to(
+        np.arange(1, max_period + 1, dtype=diff.dtype), ndim=diff.ndim, axes=-2
+    )
+    cumulative_mean /= k_range
 
-    cumulative_mean = (
-        np.cumsum(yin_frames[..., k, :], axis=-2) / k_range
-    )
+    # Map period indices from original formulation:
+    # diff[..., i, :] corresponds to d(k=i+1).
+    yin_numerator = diff[..., min_period - 1 : max_period, :]
     yin_denominator = cumulative_mean[..., min_period - 1 : max_period, :]
-    yin_frames: np.ndarray = yin_numerator / (
-        yin_denominator + util.tiny(yin_denominator)
-    )
+    yin_frames: np.ndarray = yin_numerator / (yin_denominator + util.tiny(yin_denominator))
     return yin_frames
 
 
@@ -848,10 +979,18 @@ def pyin(
     n_bins_per_semitone = int(np.ceil(1.0 / resolution))
     n_pitch_bins = int(np.floor(12 * n_bins_per_semitone * np.log2(fmax / fmin))) + 1
 
-    def _helper(a, b):
-        return __pyin_helper(
-            a,
-            b,
+    lead_shape = yin_frames.shape[:-2]
+    n_frames = yin_frames.shape[-1]
+    yin_flat = np.reshape(yin_frames, (-1, yin_frames.shape[-2], n_frames))
+    shift_flat = np.reshape(parabolic_shifts, (-1, parabolic_shifts.shape[-2], n_frames))
+    n_batch = yin_flat.shape[0]
+
+    obs_batch = np.empty((n_batch, 2 * n_pitch_bins, n_frames), dtype=yin_frames.dtype)
+    vp_batch = np.empty((n_batch, n_frames), dtype=yin_frames.dtype)
+    for batch_idx, (y_frame, p_shift) in enumerate(zip(yin_flat, shift_flat)):
+        obs_i, vp_i = __pyin_helper(
+            y_frame,
+            p_shift,
             sr,
             thresholds,
             boltzmann_parameter,
@@ -862,9 +1001,13 @@ def pyin(
             n_pitch_bins,
             n_bins_per_semitone,
         )
+        obs_batch[batch_idx] = obs_i[0]
+        vp_batch[batch_idx] = vp_i[0]
 
-    helper = np.vectorize(_helper, signature="(f,t),(k,t)->(1,d,t),(j,t)")
-    observation_probs, voiced_prob = helper(yin_frames, parabolic_shifts)
+    observation_probs = obs_batch.reshape(
+        *lead_shape, 1, 2 * n_pitch_bins, n_frames
+    )
+    voiced_prob = vp_batch.reshape(*lead_shape, 1, n_frames)
 
     # Construct transition matrix.
     max_semitones_per_frame = round(max_transition_rate * 12 * hop_length / sr)

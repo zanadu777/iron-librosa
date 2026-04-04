@@ -16,12 +16,119 @@ from .. import filters
 from .. import util
 from ..util.exceptions import ParameterError
 from numpy.typing import DTypeLike
-from typing import Optional, Union, Collection, List
+from typing import Optional, Union, Collection, List, Tuple, Dict, Any
 from .._typing import _WindowSpec, _PadMode, _FloatLike_co, _ensure_not_reachable
 
 __all__ = ["cqt", "hybrid_cqt", "pseudo_cqt", "icqt", "griffinlim_cqt", "vqt"]
 
 # TODO: ivqt, griffinlim_vqt
+
+# Lightweight in-memory cache for VQT filter bases to avoid repeating
+# basis construction work across repeated calls with identical settings.
+_VQT_FFT_BASIS_CACHE: Dict[Tuple[Any, ...], Tuple[Any, int, np.ndarray]] = {}
+_VQT_FFT_BASIS_CACHE_STATS: Dict[str, int] = {"hits": 0, "misses": 0}
+
+
+def _vqt_filter_fft_cache_info() -> Dict[str, int]:
+    """Return copy of VQT basis-cache counters and current cache size."""
+    return {
+        "hits": int(_VQT_FFT_BASIS_CACHE_STATS["hits"]),
+        "misses": int(_VQT_FFT_BASIS_CACHE_STATS["misses"]),
+        "size": int(len(_VQT_FFT_BASIS_CACHE)),
+    }
+
+
+def _vqt_filter_fft_cache_clear() -> None:
+    """Clear the in-memory VQT basis cache and reset counters."""
+    _VQT_FFT_BASIS_CACHE.clear()
+    _VQT_FFT_BASIS_CACHE_STATS["hits"] = 0
+    _VQT_FFT_BASIS_CACHE_STATS["misses"] = 0
+
+
+def __vqt_fft_cache_key(
+    sr,
+    freqs,
+    filter_scale,
+    norm,
+    sparsity,
+    hop_length,
+    window,
+    gamma,
+    dtype,
+    alpha,
+) -> Tuple[Any, ...]:
+    """Build a deterministic key for the VQT basis reuse cache."""
+    freqs_key = tuple(np.asarray(freqs, dtype=np.float64).round(decimals=12).tolist())
+    if alpha is None:
+        alpha_key = None
+    else:
+        alpha_key = tuple(np.asarray(alpha, dtype=np.float64).round(decimals=12).tolist())
+
+    # Window may be str/tuple/array/function; repr is stable enough for this cache.
+    window_key = repr(window)
+
+    return (
+        float(sr),
+        freqs_key,
+        float(filter_scale),
+        norm,
+        float(sparsity),
+        None if hop_length is None else int(hop_length),
+        window_key,
+        float(gamma) if gamma is not None else None,
+        np.dtype(dtype).str,
+        alpha_key,
+    )
+
+
+def __vqt_filter_fft_cached(
+    sr,
+    freqs,
+    filter_scale,
+    norm,
+    sparsity,
+    hop_length=None,
+    window="hann",
+    gamma=0.0,
+    dtype=np.complex64,
+    alpha=None,
+):
+    """Cached wrapper for __vqt_filter_fft with copy-on-read semantics."""
+    key = __vqt_fft_cache_key(
+        sr,
+        freqs,
+        filter_scale,
+        norm,
+        sparsity,
+        hop_length,
+        window,
+        gamma,
+        dtype,
+        alpha,
+    )
+
+    if key in _VQT_FFT_BASIS_CACHE:
+        _VQT_FFT_BASIS_CACHE_STATS["hits"] += 1
+        basis_cached, n_fft, lengths_cached = _VQT_FFT_BASIS_CACHE[key]
+        basis = basis_cached.copy() if hasattr(basis_cached, "copy") else np.array(basis_cached, copy=True)
+        return basis, n_fft, lengths_cached.copy()
+
+    _VQT_FFT_BASIS_CACHE_STATS["misses"] += 1
+    basis, n_fft, lengths = __vqt_filter_fft(
+        sr,
+        freqs,
+        filter_scale,
+        norm,
+        sparsity,
+        hop_length=hop_length,
+        window=window,
+        gamma=gamma,
+        dtype=dtype,
+        alpha=alpha,
+    )
+    basis_store = basis.copy() if hasattr(basis, "copy") else np.array(basis, copy=True)
+    _VQT_FFT_BASIS_CACHE[key] = (basis_store, int(n_fft), lengths.copy())
+    return basis, int(n_fft), lengths
 
 
 @cache(level=20)
@@ -493,7 +600,7 @@ def pseudo_cqt(
         freqs=freqs, sr=sr, window=window, filter_scale=filter_scale, alpha=alpha
     )
 
-    fft_basis, n_fft, _ = __vqt_filter_fft(
+    fft_basis, n_fft, _ = __vqt_filter_fft_cached(
         sr,
         freqs,
         filter_scale,
@@ -697,7 +804,7 @@ def icqt(
         # Slice out the current octave
         sl = slice(bins_per_octave * i, bins_per_octave * i + n_filters)
 
-        fft_basis, n_fft, _ = __vqt_filter_fft(
+        fft_basis, n_fft, _ = __vqt_filter_fft_cached(
             my_sr,
             freqs[sl],
             filter_scale,
@@ -997,7 +1104,7 @@ def vqt(
         freqs_oct = freqs[sl]
         alpha_oct = alpha[sl]
 
-        fft_basis, n_fft, _ = __vqt_filter_fft(
+        fft_basis, n_fft, _ = __vqt_filter_fft_cached(
             my_sr,
             freqs_oct,
             filter_scale,
@@ -1017,7 +1124,8 @@ def vqt(
             __cqt_response(my_y, n_fft, my_hop, fft_basis, pad_mode, dtype=dtype)
         )
 
-        if my_hop % 2 == 0:
+        # Downsample only if another octave remains to be processed.
+        if i < n_octaves - 1 and my_hop % 2 == 0:
             my_hop //= 2
             my_sr /= 2.0
             my_y = audio.resample(
@@ -1131,14 +1239,18 @@ def __cqt_response(
 
     # Reshape D to Dr
     Dr = D.reshape((-1, D.shape[-2], D.shape[-1]))
-    output_flat = np.empty(
-        (Dr.shape[0], fft_basis.shape[0], Dr.shape[-1]), dtype=D.dtype
-    )
 
-    # iterate over channels
-    #   project fft_basis.dot(Dr[i])
-    for i in range(Dr.shape[0]):
-        output_flat[i] = fft_basis.dot(Dr[i])
+    # Dense basis can be projected in one batched contraction to reduce
+    # Python loop overhead. Keep a fallback for sparse/custom basis objects.
+    if isinstance(fft_basis, np.ndarray):
+        output_flat = np.tensordot(fft_basis, Dr, axes=(1, 1))
+        output_flat = np.moveaxis(output_flat, 0, 1)
+    else:
+        output_flat = np.empty(
+            (Dr.shape[0], fft_basis.shape[0], Dr.shape[-1]), dtype=D.dtype
+        )
+        for i in range(Dr.shape[0]):
+            output_flat[i] = fft_basis.dot(Dr[i])
 
     # reshape Dr to match D's leading dimensions again
     shape = list(D.shape)

@@ -1,0 +1,32 @@
+﻿========================================================================
+Phase 12 CQT/VQT benchmark
+========================================================================
+cqt  mono-10s     shape=(84, 431)        avg=  26.637 ms min=  26.129 ms
+vqt  mono-10s     shape=(84, 431)        avg=  26.000 ms min=  25.987 ms
+cqt  stereo-10s   shape=(2, 84, 431)     avg=  32.906 ms min=  32.391 ms
+vqt  stereo-10s   shape=(2, 84, 431)     avg=  31.825 ms min=  30.346 ms
+cqt  mono-30s     shape=(84, 1292)       avg=  35.741 ms min=  33.625 ms
+vqt  mono-30s     shape=(84, 1292)       avg=  38.623 ms min=  37.145 ms
+cqt  stereo-30s   shape=(2, 84, 1292)    avg=  53.940 ms min=  49.806 ms
+vqt  stereo-30s   shape=(2, 84, 1292)    avg=  52.236 ms min=  50.700 ms
+------------------------------------------------------------------------
+Internal stage profile (reference: mono-30s)
+------------------------------------------------------------------------
+  stage profile: cqt
+    __vqt_filter_fft         total=  35.674 ms  calls= 14  avg=  2.548 ms  share= 35.5%
+    filters.wavelet          total=  22.326 ms  calls= 14  avg=  1.595 ms  share= 22.2%
+    __cqt_response           total=  16.891 ms  calls= 14  avg=  1.206 ms  share= 16.8%
+    audio.resample           total=  12.845 ms  calls= 14  avg=  0.918 ms  share= 12.8%
+    stft                     total=  11.645 ms  calls= 14  avg=  0.832 ms  share= 11.6%
+    filters.wavelet_lengths  total=   0.712 ms  calls= 18  avg=  0.040 ms  share=  0.7%
+    __trim_stack             total=   0.448 ms  calls=  2  avg=  0.224 ms  share=  0.4%
+    __early_downsample       total=   0.012 ms  calls=  2  avg=  0.006 ms  share=  0.0%
+  stage profile: vqt
+    __vqt_filter_fft         total=  35.161 ms  calls= 14  avg=  2.511 ms  share= 36.5%
+    filters.wavelet          total=  22.961 ms  calls= 14  avg=  1.640 ms  share= 23.8%
+    __cqt_response           total=  14.155 ms  calls= 14  avg=  1.011 ms  share= 14.7%
+    audio.resample           total=  12.807 ms  calls= 14  avg=  0.915 ms  share= 13.3%
+    stft                     total=   9.901 ms  calls= 14  avg=  0.707 ms  share= 10.3%
+    filters.wavelet_lengths  total=   0.857 ms  calls= 18  avg=  0.048 ms  share=  0.9%
+    __trim_stack             total=   0.445 ms  calls=  2  avg=  0.222 ms  share=  0.5%
+    __early_downsample       total=   0.020 ms  calls=  2  avg=  0.010 ms  share=  0.0%

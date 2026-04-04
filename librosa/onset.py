@@ -18,6 +18,7 @@ import scipy
 from ._cache import cache
 from . import core
 from . import util
+from ._rust_bridge import _rust_ext, RUST_AVAILABLE
 from .util.exceptions import ParameterError
 
 from .feature.spectral import melspectrogram
@@ -432,6 +433,10 @@ def onset_backtrack(events: np.ndarray, energy: np.ndarray) -> np.ndarray:
     # tail points: energy[i] < energy[i+1]
     minima = np.flatnonzero((energy[1:-1] <= energy[:-2]) & (energy[1:-1] < energy[2:]))
 
+    # If there are no detected events, return empty array immediately.
+    if len(events) == 0:
+        return events
+
     # Pad on a 0, just in case we have onsets with no preceding minimum
     # Shift by one to account for slicing in minima detection
     minima = util.fix_frames(1 + minima, x_min=0)
@@ -589,36 +594,87 @@ def onset_strength_multi(
     # Ensure that S is at least 2-d
     S = np.atleast_2d(S)
 
-    # Compute the reference spectrogram.
-    # Efficiency hack: skip filtering step and pass by reference
-    # if max_size will produce a no-op.
-    if ref is None:
-        if max_size == 1:
-            ref = S
+    # Rust fast path eligibility for full-band mean onset flux.
+    _rust_onset_base = (
+        RUST_AVAILABLE
+        and S.ndim == 2
+        and S.dtype in (np.float32, np.float64)
+        and channels is None
+        and aggregate is np.mean
+    )
+
+    _onset_suffix = "f64" if S.dtype == np.float64 else "f32"
+    _onset_maxfilter_name = f"onset_flux_mean_maxfilter_{_onset_suffix}"
+    _onset_ref_name = f"onset_flux_mean_ref_{_onset_suffix}"
+    _onset_plain_name = f"onset_flux_mean_{_onset_suffix}"
+
+    onset_env = None
+    if (
+        _rust_onset_base
+        and ref is None
+        and max_size >= 9
+        and max_size % 2 == 1
+        and hasattr(_rust_ext, _onset_maxfilter_name)
+    ):
+        # Phase-2 fused path: local-max reference + flux in one Rust kernel.
+        onset_env = getattr(_rust_ext, _onset_maxfilter_name)(
+            np.ascontiguousarray(S), int(lag), int(max_size)
+        )
+
+    # Compute the reference spectrogram when a fused Rust path was not used.
+    if onset_env is None:
+        # Efficiency hack: skip filtering step and pass by reference
+        # if max_size will produce a no-op.
+        if ref is None:
+            if max_size == 1:
+                ref = S
+            else:
+                ref = scipy.ndimage.maximum_filter1d(S, max_size, axis=-2)
+        elif ref.shape != S.shape:
+            raise ParameterError(
+                f"Reference spectrum shape {ref.shape} must match input spectrum {S.shape}"
+            )
+
+        assert ref is not None
+
+        if (
+            _rust_onset_base
+            and ref.ndim == 2
+            and ref.dtype == S.dtype
+            and hasattr(_rust_ext, _onset_ref_name)
+        ):
+            onset_env = getattr(_rust_ext, _onset_ref_name)(
+                np.ascontiguousarray(S), np.ascontiguousarray(ref), int(lag)
+            )
+        elif (
+            _rust_onset_base
+            and max_size == 1
+            and hasattr(_rust_ext, _onset_plain_name)
+        ):
+            # Backward-compatible fallback for environments with the phase-1 kernel only.
+            onset_env = getattr(_rust_ext, _onset_plain_name)(
+                np.ascontiguousarray(S), int(lag)
+            )
+
+    if onset_env is None:
+        assert ref is not None
+        # Compute difference to the reference, spaced by lag
+        onset_env = S[..., lag:] - ref[..., :-lag]
+
+        # Discard negatives (decreasing amplitude)
+        onset_env = np.maximum(0.0, onset_env)
+
+        # Aggregate within channels
+        pad = True
+        if channels is None:
+            channels = [slice(None)]
         else:
-            ref = scipy.ndimage.maximum_filter1d(S, max_size, axis=-2)
-    elif ref.shape != S.shape:
-        raise ParameterError(
-            f"Reference spectrum shape {ref.shape} must match input spectrum {S.shape}"
-        )
+            pad = False
 
-    # Compute difference to the reference, spaced by lag
-    onset_env = S[..., lag:] - ref[..., :-lag]
-
-    # Discard negatives (decreasing amplitude)
-    onset_env = np.maximum(0.0, onset_env)
-
-    # Aggregate within channels
-    pad = True
-    if channels is None:
-        channels = [slice(None)]
-    else:
-        pad = False
-
-    if callable(aggregate):
-        onset_env = util.sync(
-            onset_env, channels, aggregate=aggregate, pad=pad, axis=-2
-        )
+        if callable(aggregate):
+            onset_env = util.sync(
+                onset_env, channels, aggregate=aggregate, pad=pad, axis=-2
+            )
 
     # compensate for lag
     pad_width = lag

@@ -1,8 +1,9 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """Utilities for spectral processing"""
 from __future__ import annotations
 import warnings
+import os
 
 import numpy as np
 import scipy
@@ -20,6 +21,7 @@ from .. import util
 from ..util.exceptions import ParameterError
 from ..filters import get_window, semitone_filterbank
 from ..filters import window_sumsquare
+from .._rust_bridge import _rust_ext, RUST_AVAILABLE
 from numpy.typing import DTypeLike
 from typing import Any, Callable, Optional, Tuple, List, Union, overload
 from typing_extensions import Literal
@@ -243,6 +245,83 @@ def stft(
     # Pad the window out to n_fft size
     fft_window = util.pad_center(fft_window, size=n_fft)
 
+    # Rust fast-path for 1D complex STFT.
+    # Keep this conservative to preserve exact behavior for advanced cases.
+    _rust_stft_ok = (
+        RUST_AVAILABLE
+        and y.ndim >= 1
+        and y.dtype in (np.float32, np.float64)
+        and win_length == n_fft
+        and n_fft <= y.shape[-1]
+        and out is None
+        and (center is False or pad_mode == "constant")
+        and (
+            (y.dtype == np.float32 and hasattr(_rust_ext, "stft_complex"))
+            or (y.dtype == np.float64 and hasattr(_rust_ext, "stft_complex_f64"))
+        )
+    )
+
+    if _rust_stft_ok:
+        y_c = np.ascontiguousarray(y)
+        win_dtype = np.float32 if y.dtype == np.float32 else np.float64
+        win_c = np.ascontiguousarray(fft_window, dtype=win_dtype)
+
+        rust_stft_complex = (
+            _rust_ext.stft_complex if y.dtype == np.float32 else _rust_ext.stft_complex_f64
+        )
+
+        if y_c.ndim == 1:
+            stft_matrix = rust_stft_complex(
+                y_c,
+                int(n_fft),
+                int(hop_length),
+                bool(center),
+                win_c,
+            )
+        else:
+            # Batch leading dimensions into channels and use native batched
+            # kernels when available; otherwise fall back to per-channel calls.
+            lead_shape = y_c.shape[:-1]
+            y_batch = y_c.reshape((-1, y_c.shape[-1]))
+            rust_stft_complex_batch = (
+                getattr(_rust_ext, "stft_complex_batch", None)
+                if y.dtype == np.float32
+                else getattr(_rust_ext, "stft_complex_f64_batch", None)
+            )
+
+            # For small channel counts (especially stereo), per-channel dispatch can
+            # outperform batched kernels due to lower setup/reshape overhead.
+            use_batch = rust_stft_complex_batch is not None and y_batch.shape[0] >= 4
+
+            if use_batch:
+                stft_batch = rust_stft_complex_batch(
+                    y_batch,
+                    int(n_fft),
+                    int(hop_length),
+                    bool(center),
+                    win_c,
+                )
+                stft_matrix = stft_batch.reshape(lead_shape + stft_batch.shape[-2:])
+            else:
+                stft_list = [
+                    rust_stft_complex(
+                        y_batch[ch],
+                        int(n_fft),
+                        int(hop_length),
+                        bool(center),
+                        win_c,
+                    )
+                    for ch in range(y_batch.shape[0])
+                ]
+                stft_matrix = np.stack(stft_list, axis=0).reshape(
+                    lead_shape + stft_list[0].shape
+                )
+
+        if dtype is not None and np.dtype(dtype) != stft_matrix.dtype:
+            stft_matrix = stft_matrix.astype(dtype, copy=False)
+
+        return stft_matrix
+
     # Reshape so that the window can be broadcast
     fft_window = util.expand_to(fft_window, ndim=1 + y.ndim, axes=-2)
 
@@ -416,7 +495,7 @@ def istft(
 
     .. [#] D. W. Griffin and J. S. Lim,
         "Signal estimation from modified short-time Fourier transform,"
-        IEEE Trans. ASSP, vol.32, no.2, pp.236–243, Apr. 1984.
+        IEEE Trans. ASSP, vol.32, no.2, pp.236ΓÇô243, Apr. 1984.
 
     Parameters
     ----------
@@ -698,12 +777,10 @@ def __reassign_frequencies(
         See ``stft`` for details.
 
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
-        - a window specification (string, tuple, number);
+        - a window specification (string, tuple, or number);
           see `scipy.signal.get_window`
         - a window function, such as `scipy.signal.windows.hann`
         - a user-specified window vector of length ``n_fft``
-
-        See `stft` for details.
 
         .. see also:: `filters.get_window`
 
@@ -861,12 +938,10 @@ def __reassign_times(
         See `stft` for details.
 
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
-        - a window specification (string, tuple, number);
+        - a window specification (string, tuple, or number);
           see `scipy.signal.get_window`
         - a window function, such as `scipy.signal.windows.hann`
         - a user-specified window vector of length ``n_fft``
-
-        See `stft` for details.
 
         .. see also:: `filters.get_window`
 
@@ -1017,7 +1092,7 @@ def reassigned_spectrogram(
     ``S_dh`` is the complex STFT calculated using the derivative of the original
     window, and ``S_th`` is the complex STFT calculated using the original window
     multiplied by the time offset from the window center. See [#]_ for
-    additional algorithms, and [#]_ and [#]_ for history and discussion of the
+    additional algorithms, and [#]_, [#]_, and [#]_ for history and discussion of the
     method.
 
     .. [#] Flandrin, P., Auger, F., & Chassande-Mottin, E. (2002).
@@ -1063,12 +1138,10 @@ def reassigned_spectrogram(
         See `stft` for details.
 
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
-        - a window specification (string, tuple, number);
+        - a window specification (string, tuple, or number);
           see `scipy.signal.get_window`
         - a window function, such as `scipy.signal.windows.hann`
         - a user-specified window vector of length ``n_fft``
-
-        See `stft` for details.
 
         .. see also:: `filters.get_window`
 
@@ -1178,13 +1251,15 @@ def reassigned_spectrogram(
     >>> mags_db = librosa.amplitude_to_db(mags, ref=np.max)
 
     >>> fig, ax = plt.subplots(nrows=2, sharex=True, sharey=True)
-    >>> img = librosa.display.specshow(mags_db, x_axis="s", y_axis="linear", sr=sr,
+    >>> imgpow = librosa.display.specshow(mags_db, x_axis="s", y_axis="linear", sr=sr,
     ...                          hop_length=n_fft//4, ax=ax[0])
-    >>> ax[0].set(title="Spectrogram", xlabel=None)
+    >>> ax[0].set(title='Spectrogram', xlabel=None)
     >>> ax[0].label_outer()
-    >>> ax[1].scatter(times, freqs, c=mags_db, cmap="magma", alpha=0.1, s=5)
-    >>> ax[1].set_title("Reassigned spectrogram")
-    >>> fig.colorbar(img, ax=ax, format="%+2.f dB")
+    >>> img = librosa.display.specshow(perceptual_weighting(mags**2, freqs, ref=np.max),
+    ...                                 y_axis='cqt_hz', x_axis='time', ax=ax[1])
+    >>> ax[1].set(title='Perceptually weighted spectrogram')
+    >>> fig.colorbar(imgpow, ax=ax[0])
+    >>> fig.colorbar(img, ax=ax[1], format="%+2.0f dB")
     """
     if not callable(ref_power) and ref_power < 0:
         raise ParameterError("ref_power must be non-negative or callable.")
@@ -1368,6 +1443,7 @@ def phase_vocoder(
     rate: float,
     hop_length: Optional[int] = None,
     n_fft: Optional[int] = None,
+    prefer_rust: bool = True,
 ) -> np.ndarray:
     """Phase vocoder.  Given an STFT matrix D, speed up by a factor of ``rate``
 
@@ -1418,6 +1494,12 @@ def phase_vocoder(
         However, if D was constructed using an odd-length window, the correct
         frame length can be specified here.
 
+    prefer_rust : bool
+        If True (default) and Rust acceleration is available, use the Rust kernel
+        for improved performance. If False, always use the pure-Python implementation.
+        The Rust kernel produces numerically identical results (within machine
+        precision) to the Python reference implementation.
+
     Returns
     -------
     D_stretched : np.ndarray [shape=(..., d, t / rate), dtype=complex]
@@ -1451,18 +1533,67 @@ def phase_vocoder(
     padding[-1] = (0, 2)
     D = np.pad(D, padding, mode="constant")
 
-    for t, step in enumerate(time_steps):
-        columns = D[..., int(step) : int(step + 2)]
+    # Pre-compute frame indices and interpolation weights once.
+    step_int = np.floor(time_steps).astype(int)
+    step_alpha = time_steps - step_int
 
+    # Pre-compute phase and magnitude after padding to avoid repeated
+    # np.angle/np.abs calls inside the synthesis loop.
+    D_phase = np.angle(D)
+    D_mag = np.abs(D)
+
+    # ── Rust fast-path: eliminate Python frame loop ────────────────────────────
+    # Dispatch to Rust kernel when: Rust is available, input is a real ndarray (not masked),
+    # dtype is complex64 or complex128, and prefer_rust=True.
+    # Handles mono (ndim==2) and multichannel (ndim>2) by iterating Rust calls per-channel.
+    _rust_pv_fn = None
+    if prefer_rust and RUST_AVAILABLE and isinstance(D, np.ndarray) and D.ndim >= 2:
+        if D.dtype == np.complex64 and hasattr(_rust_ext, "phase_vocoder_f32"):
+            _rust_pv_fn = _rust_ext.phase_vocoder_f32
+            _pv_float_dtype = np.float32
+        elif D.dtype == np.complex128 and hasattr(_rust_ext, "phase_vocoder_f64"):
+            _rust_pv_fn = _rust_ext.phase_vocoder_f64
+            _pv_float_dtype = np.float64
+
+    if _rust_pv_fn is not None:
+        _step_int_i64 = step_int.astype(np.int64)
+        # Keep phase vectors in float64 for complex64 parity; f64 path already uses f64.
+        _phi = phi_advance if D.dtype == np.complex64 else phi_advance.astype(np.float64)
+        _step_alpha = step_alpha.astype(np.float64)
+
+        if D.ndim == 2:
+            # Mono: single Rust call.
+            # Transpose to (n_padded_frames, n_bins) for cache-friendly row access.
+            _dpt = np.ascontiguousarray(D_phase.astype(_pv_float_dtype).T)
+            _dmt = np.ascontiguousarray(D_mag.astype(_pv_float_dtype).T)
+            _pa = phase_acc.astype(np.float64)
+            return _rust_pv_fn(_dpt, _dmt, _phi, _step_int_i64, _step_alpha, _pa)
+        else:
+            # Multichannel: iterate batch dimensions, fill d_stretch per channel.
+            _batch_shape = D.shape[:-2]
+            _dph_typed = D_phase.astype(_pv_float_dtype)
+            _dmg_typed = D_mag.astype(_pv_float_dtype)
+            _pa_typed = phase_acc.astype(np.float64)
+            for _ch in np.ndindex(*_batch_shape):
+                _dpt = np.ascontiguousarray(_dph_typed[_ch].T)
+                _dmt = np.ascontiguousarray(_dmg_typed[_ch].T)
+                _pa = _pa_typed[_ch]
+                d_stretch[_ch] = _rust_pv_fn(
+                    _dpt, _dmt, _phi, _step_int_i64, _step_alpha, _pa
+                )
+            return d_stretch
+    # ── end Rust fast-path ─────────────────────────────────────────────────────
+
+    for t, idx in enumerate(step_int):
         # Weighting for linear magnitude interpolation
-        alpha = np.mod(step, 1.0)
-        mag = (1.0 - alpha) * np.abs(columns[..., 0]) + alpha * np.abs(columns[..., 1])
+        alpha = step_alpha[t]
+        mag = (1.0 - alpha) * D_mag[..., idx] + alpha * D_mag[..., idx + 1]
 
         # Store to output array
         d_stretch[..., t] = util.phasor(phase_acc, mag=mag)
 
         # Compute phase advance
-        dphase = np.angle(columns[..., 1]) - np.angle(columns[..., 0]) - phi_advance
+        dphase = D_phase[..., idx + 1] - D_phase[..., idx] - phi_advance
 
         # Wrap to -pi:pi range
         dphase = dphase - 2.0 * np.pi * np.round(dphase / (2.0 * np.pi))
@@ -1508,7 +1639,7 @@ def iirt(
         * 85 filters with MIDI pitches [24, 108] as ``center_freqs``.
         * each filter having a bandwidth of one semitone.
 
-    .. [#] Müller, Meinard.
+    .. [#] M├╝ller, Meinard.
            "Information Retrieval for Music and Motion."
            Springer Verlag. 2007.
 
@@ -1794,6 +1925,9 @@ def power_to_db(
     if amin <= 0:
         raise ParameterError("amin must be strictly positive")
 
+    if top_db is not None and top_db < 0:
+        raise ParameterError("top_db must be non-negative")
+
     if np.issubdtype(S.dtype, np.complexfloating):
         warnings.warn(
             "power_to_db was called on complex input so phase "
@@ -1811,12 +1945,35 @@ def power_to_db(
     else:
         ref_value = np.abs(ref)
 
+    # --- iron-librosa: Rust acceleration ---
+    if (
+        RUST_AVAILABLE
+        and isinstance(magnitude, np.ndarray)
+        and magnitude.ndim
+        and not callable(ref)
+        and np.isscalar(ref_value)
+        and magnitude.dtype in (np.float32, np.float64)
+    ):
+        _rust_power_to_db = (
+            getattr(_rust_ext, "power_to_db_f32", None)
+            if magnitude.dtype == np.float32
+            else getattr(_rust_ext, "power_to_db_f64", None)
+        )
+
+        if _rust_power_to_db is not None:
+            flat = np.ravel(np.ascontiguousarray(magnitude))
+            return _rust_power_to_db(
+                flat,
+                ref_power=float(ref_value),
+                amin=float(amin),
+                top_db=None if top_db is None else float(top_db),
+            ).reshape(magnitude.shape)
+    # --- end Rust acceleration ---
+
     log_spec: np.ndarray = 10.0 * np.log10(np.maximum(amin, magnitude))
     log_spec -= 10.0 * np.log10(np.maximum(amin, ref_value))
 
     if top_db is not None:
-        if top_db < 0:
-            raise ParameterError("top_db must be non-negative")
         log_spec = np.maximum(log_spec, log_spec.max() - top_db)
 
     return log_spec
@@ -1870,6 +2027,25 @@ def db_to_power(S_db: Union[_FloatLike_co, np.ndarray], *, ref: float = 1.0) -> 
     -----
     This function caches at level 30.
     """
+    S_db = np.asarray(S_db)
+
+    # --- iron-librosa: Rust acceleration ---
+    if (
+        RUST_AVAILABLE
+        and S_db.ndim
+        and S_db.dtype in (np.float32, np.float64)
+    ):
+        _rust_db_to_power = (
+            getattr(_rust_ext, "db_to_power_f32", None)
+            if S_db.dtype == np.float32
+            else getattr(_rust_ext, "db_to_power_f64", None)
+        )
+
+        if _rust_db_to_power is not None:
+            flat = np.ravel(np.ascontiguousarray(S_db))
+            return _rust_db_to_power(flat, ref_power=float(ref)).reshape(S_db.shape)
+    # --- end Rust acceleration ---
+
     return ref * np.power(10.0, S_db * 0.1)
 
 
@@ -2215,8 +2391,10 @@ def fmt(
     >>> fig, ax = plt.subplots(nrows=3)
     >>> ax[0].plot(odf, label='Onset strength')
     >>> ax[0].set(xlabel='Time (frames)', title='Onset strength')
+    >>> ax[0].legend()
     >>> ax[1].plot(odf_ac_norm, label='Onset autocorrelation')
     >>> ax[1].set(xlabel='Lag (frames)', title='Onset autocorrelation')
+    >>> ax[1].legend()
     >>> ax[2].semilogy(np.abs(odf_ac_scale), label='Scale transform magnitude')
     >>> ax[2].set(xlabel='scale coefficients')
     """
@@ -2443,7 +2621,7 @@ def pcen(
         The audio sampling rate
 
     hop_length : int > 0 [scalar]
-        The hop length of ``S``, expressed in samples
+        The hop length of ``S``; defaults to ``512``
 
     gain : number >= 0 [scalar]
         The gain factor.  Typical values should be slightly less than 1.
@@ -2529,7 +2707,7 @@ def pcen(
     >>> imgpcen = librosa.display.specshow(pcen_S, x_axis='time', y_axis='mel', ax=ax[1])
     >>> ax[1].set(title='Per-channel energy normalization')
     >>> fig.colorbar(img, ax=ax[0], format="%+2.0f dB")
-    >>> fig.colorbar(imgpcen, ax=ax[1])
+    >>> fig.colorbar(imgpcen, ax=ax[1], format="%+2.0f dB")
 
     Compare PCEN with and without max-filtering
 
@@ -2663,9 +2841,9 @@ def griffinlim(
 
     .. [#] D. W. Griffin and J. S. Lim,
         "Signal estimation from modified short-time Fourier transform,"
-        IEEE Trans. ASSP, vol.32, no.2, pp.236–243, Apr. 1984.
+        IEEE Trans. ASSP, vol.32, no.2, pp.236ΓÇô243, Apr. 1984.
 
-    .. [#] Perraudin, N., Balazs, P., & Søndergaard, P. L.
+    .. [#] Perraudin, N., Balazs, P., & S├╕ndergaard, P. L.
         "A fast Griffin-Lim algorithm,"
         IEEE Workshop on Applications of Signal Processing to Audio and Acoustics (pp. 1-4),
         Oct. 2013.
@@ -2687,8 +2865,9 @@ def griffinlim(
 
     n_fft : None or int > 0
         The number of samples per frame.
-        By default, this will be inferred from the shape of ``S`` as an even number.
-        However, if an odd frame length was used, you can explicitly set ``n_fft``.
+        By default (None), this will be inferred from the shape of D as an even number.
+        However, if an odd frame length was used, the correct
+        frame length can be specified here.
 
     window : string, tuple, number, function, or np.ndarray [shape=(n_fft,)]
         A window specification as supported by `stft` or `istft`
@@ -2913,7 +3092,7 @@ def _spectrogram(
     center : boolean
         - If ``True``, the signal ``y`` is padded so that frame
           ``t`` is centered at ``y[t * hop_length]``.
-        - If ``False``, then frame ``t`` begins at ``y[t * hop_length]``
+        - If ``False``, the STFT is assumed to use left-aligned frames.
 
     pad_mode : string
         If ``center=True``, the padding mode to use at the edges of the signal.
@@ -2928,6 +3107,37 @@ def _spectrogram(
         - If ``S`` is provided, then ``n_fft`` is inferred from ``S``
         - Else, copied from input
     """
+    def _is_rust_hann_window(win_spec: _WindowSpec, fft_size: int) -> bool:
+        """Check if window is Hann (string or precomputed periodic array)."""
+        if isinstance(win_spec, str) and win_spec == "hann":
+            return True
+
+        try:
+            win_arr = np.asarray(win_spec)
+        except Exception:
+            return False
+
+        if win_arr.ndim != 1 or win_arr.shape[0] != int(fft_size) or np.iscomplexobj(win_arr):
+            return False
+
+        hann_ref = get_window("hann", int(fft_size), fftbins=True)
+        return np.allclose(win_arr, hann_ref, rtol=1e-7, atol=1e-10)
+
+    def _extract_window_array(win_spec: _WindowSpec, fft_size: int) -> Optional[np.ndarray]:
+        """Extract window array from window spec. Returns None for Hann string or unsupported specs."""
+        if isinstance(win_spec, str):
+            # String window specs: only pass None to Rust, which falls back to Hann
+            return None
+
+        try:
+            win_arr = np.asarray(win_spec)
+            if win_arr.ndim == 1 and win_arr.shape[0] == int(fft_size) and not np.iscomplexobj(win_arr):
+                return win_arr
+        except Exception:
+            pass
+
+        return None
+
     if S is not None:
         # Infer n_fft from spectrogram shape, but only if it mismatches
         if n_fft is None or n_fft // 2 + 1 != S.shape[-2]:
@@ -2940,19 +3150,67 @@ def _spectrogram(
             raise ParameterError(
                 "Input signal must be provided to compute a spectrogram"
             )
-        S = (
-            np.abs(
-                stft(
-                    y,
-                    n_fft=n_fft,
-                    hop_length=hop_length,
-                    win_length=win_length,
-                    center=center,
-                    window=window,
-                    pad_mode=pad_mode,
-                )
+        # Check if we can dispatch to Rust. We support:
+        # 1. window="hann" (string)
+        # 2. Precomputed window array (any type that can be converted to float32)
+        window_for_rust = None
+        _rust_window_ok = False
+
+        if isinstance(window, str):
+            # String windows: only Hann can dispatch
+            _rust_window_ok = (window == "hann")
+        else:
+            # Precomputed window: extract and validate length
+            window_for_rust = _extract_window_array(window, n_fft)
+            _rust_window_ok = (window_for_rust is not None)
+
+        _rust_stft_ok = (
+            RUST_AVAILABLE
+            and y.ndim == 1
+            and y.dtype in (np.float32, np.float64)
+            and _rust_window_ok
+            and (win_length is None or win_length == n_fft)
+            and power == 2.0
+            and (
+                (y.dtype == np.float32 and hasattr(_rust_ext, "stft_power"))
+                or (y.dtype == np.float64 and hasattr(_rust_ext, "stft_power_f64"))
             )
-            ** power
         )
+
+        if _rust_stft_ok:
+            y_c = np.ascontiguousarray(y)
+
+            # Match window dtype to the selected kernel.
+            win_c = None
+            if window_for_rust is not None:
+                win_dtype = np.float32 if y.dtype == np.float32 else np.float64
+                win_c = np.ascontiguousarray(window_for_rust, dtype=win_dtype)
+
+            rust_stft_power = (
+                _rust_ext.stft_power if y.dtype == np.float32 else _rust_ext.stft_power_f64
+            )
+
+            S = rust_stft_power(
+                y_c,
+                int(n_fft),
+                int(hop_length) if hop_length is not None else n_fft // 4,
+                bool(center),
+                win_c,  # None uses Hann in Rust, otherwise uses provided window
+            )
+        else:
+            S = (
+                np.abs(
+                    stft(
+                        y,
+                        n_fft=n_fft,
+                        hop_length=hop_length,
+                        win_length=win_length,
+                        center=center,
+                        window=window,
+                        pad_mode=pad_mode,
+                    )
+                )
+                ** power
+            )
 
     return S, n_fft

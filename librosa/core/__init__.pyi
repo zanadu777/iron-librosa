@@ -1,3 +1,14 @@
+# Expose submodules by name so that e.g. `librosa.core.convert` works.
+from . import audio as audio
+from . import constantq as constantq
+from . import convert as convert
+from . import fft as fft
+from . import harmonic as harmonic
+from . import intervals as intervals
+from . import notation as notation
+from . import pitch as pitch
+from . import spectrum as spectrum
+
 from .convert import (
     frames_to_samples as frames_to_samples,
     frames_to_time as frames_to_time,

@@ -1,0 +1,17 @@
+﻿Phase 11 quick benchmark: spectral_contrast multichannel
+case       rust_ms      python_ms    speedup   
+
+frames=300
+mono       1.275        1.272        1.00      x
+stereo     2.305        2.300        1.00      x
+quad       3.748        4.945        1.32      x
+
+frames=800
+mono       3.298        3.386        1.03      x
+stereo     7.162        6.911        0.96      x
+quad       9.739        13.584       1.39      x
+
+frames=1600
+mono       4.133        7.472        1.81      x
+stereo     14.839       15.185       1.02      x
+quad       25.617       31.940       1.25      x
