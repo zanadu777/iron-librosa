@@ -48,7 +48,7 @@ def decompose(
     Given a spectrogram ``S``, produce a decomposition into ``components``
     and ``activations`` such that ``S ~= components.dot(activations)``.
 
-    By default, this is done with with non-negative matrix factorization (NMF),
+    By default, this is done with non-negative matrix factorization (NMF),
     but any `sklearn.decomposition`-type object will work.
 
     Parameters

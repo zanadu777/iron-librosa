@@ -61,6 +61,9 @@ jobs:
             conda info -a
             conda list
 
+        - name: Install Rust toolchain
+          uses: dtolnay/rust-toolchain@stable
+
         - name: Install librosa
           shell: bash -l {0}
           run: python -m pip install --upgrade-strategy only-if-needed -e .[docs]

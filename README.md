@@ -1,23 +1,39 @@
 [![librosa logo](docs/img/librosa_logo_text.svg)](https://librosa.org/)
 
-# librosa
+# iron-librosa
 
+Rust-accelerated music and audio analysis with broad `librosa` API compatibility.
 
-A python package for music and audio analysis.  
+`iron-librosa` is an active acceleration project built around the `librosa` ecosystem.
+It is **not** a one-off fork for a single bug fix or feature patch: the goal is to
+progressively move hot-path analysis and transform kernels into Rust while preserving
+Python-facing behavior and compatibility.
 
-[![PyPI](https://img.shields.io/pypi/v/librosa.svg)](https://pypi.python.org/pypi/librosa)
-[![Anaconda-Server Badge](https://anaconda.org/conda-forge/librosa/badges/version.svg)](https://anaconda.org/conda-forge/librosa)
-[![License](https://img.shields.io/pypi/l/librosa.svg)](https://github.com/librosa/librosa/blob/main/LICENSE.md)
+This repository currently contains:
+
+- the Python `librosa` package interface used for compatibility,
+- the Rust extension module exposed as `librosa._rust`, and
+- the convenience namespace package `iron_librosa` for explicit accelerated imports.
+
+[![License](https://img.shields.io/pypi/l/librosa.svg)](https://github.com/zanadu777/iron-librosa/blob/main/LICENSE.md)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.591533.svg)](https://doi.org/10.5281/zenodo.591533)
 
-[![CI](https://github.com/librosa/librosa/actions/workflows/ci.yml/badge.svg)](https://github.com/librosa/librosa/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/librosa/librosa/branch/main/graph/badge.svg?token=ULWnUHaIJC)](https://codecov.io/gh/librosa/librosa)
-[![Docs](https://github.com/librosa/librosa/actions/workflows/docs.yml/badge.svg)](https://librosa.org/doc/latest/index.html)
+[![CI](https://github.com/zanadu777/iron-librosa/actions/workflows/ci.yml/badge.svg)](https://github.com/zanadu777/iron-librosa/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/zanadu777/iron-librosa/branch/main/graph/badge.svg)](https://codecov.io/gh/zanadu777/iron-librosa)
+[![Docs](https://github.com/zanadu777/iron-librosa/actions/workflows/docs.yml/badge.svg)](https://github.com/zanadu777/iron-librosa/actions/workflows/docs.yml)
+
+> Upstream lineage: this work builds on the `librosa` project and keeps upstream
+> documentation/citation links where relevant, while extending the implementation
+> with Rust acceleration.
 
 #  Table of Contents
 
-- [Documentation](#Documentation)
-- [Installation](#Installation)
+- [Documentation](#documentation)
+- [Project Status](#project-status)
+- [Rust Coverage Snapshot](#rust-coverage-snapshot)
+- [Phase Commit Policy](#phase-commit-policy)
+- [Phase 13 References](#phase-13-references)
+- [Installation](#installation)
   - [Using PyPI](#using-pypi)
   - [Using Anaconda](#using-anaconda)
   - [Building From Source](#building-from-source)
@@ -44,33 +60,83 @@ of things that librosa can do.
 
 ---
 
-[Back To Top ↥](#librosa)
+[Back To Top ↥](#iron-librosa)
 
+## Project Status
+
+- **Current phase:** Phase 13 (CQT/VQT spike)
+- **Recent completion:** Rust `phase_vocoder` promoted to default dispatch
+- **Near-term objective:** integrate the first CQT/VQT Rust seam at `__cqt_response`
+- **Project direction:** progressively expand Rust coverage across high-value analysis paths
+- **Tracking doc:** `Development_docs/PHASE13_CQT_VQT_SPIKE.md`
+
+---
+
+[Back To Top ↥](#iron-librosa)
+
+## Rust Coverage Snapshot
+
+- **Current acceleration coverage:** ~70% of hot-path operations
+- **Implemented modules:** STFT/ISTFT, phase vocoder, mel, onset, tuning, chroma, spectral utilities
+- **Phase 13 target:** CQT/VQT acceleration and parity hardening
+- **Coverage roadmap:** `Development_docs/LIBROSA_RUST_COVERAGE_ROADMAP.md`
+
+---
+
+[Back To Top ↥](#iron-librosa)
+
+## Phase Commit Policy
+
+At the end of each phase, create a dedicated commit containing only files owned by that phase's scope, validation, and docs.
+
+Minimum checklist before a phase-end commit:
+
+1. Update the phase status document in `Development_docs/`
+2. Run the validation commands listed in the phase plan
+3. Capture benchmark/parity artifacts when required by exit criteria
+4. Commit with a phase-scoped message such as `phase-13: <summary>`
+
+---
+
+[Back To Top ↥](#iron-librosa)
+
+## Phase 13 References
+
+- Spike plan: `Development_docs/PHASE13_CQT_VQT_SPIKE.md`
+- Next actions: `Development_docs/NEXT_ACTIONS_PHASE13_PLANNING.md`
+- Coverage quick reference: `Development_docs/RUST_COVERAGE_QUICK_REFERENCE.md`
+- Coverage roadmap: `Development_docs/LIBROSA_RUST_COVERAGE_ROADMAP.md`
+
+---
+
+[Back To Top ↥](#iron-librosa)
 
 ## Installation
 
 
 ### Using PyPI
 
-The latest stable release is available on PyPI, and you can install it by saying
+For this repository/project configuration, the package name is `iron-librosa`.
+If you are consuming a published wheel for this project, install it with:
 ```
-python -m pip install librosa
+python -m pip install iron-librosa
 ```
 
 ### Using Anaconda
 
-Anaconda users can install using ```conda-forge```:
+A dedicated conda package is not documented in this repository yet.
+For now, prefer source/editable installs for development work:
 ```
-conda install -c conda-forge librosa
+python -m pip install -e .
 ```
 
 ### Building from source
 
-To build librosa from source, say 
+To build `iron-librosa` from source, say 
 ```
 python setup.py build
 ```
-Then, to install librosa, say 
+Then, to install it, say 
 ```
 python setup.py install
 ```
@@ -86,24 +152,25 @@ This should print out a description of your software environment, along with the
 Alternatively, you can download or clone the repository and use `pip` to handle dependencies:
 
 ```
-unzip librosa.zip
-python -m pip install -e librosa
+unzip iron-librosa.zip
+python -m pip install -e .
 ```
 or
 
 ```
-git clone https://github.com/librosa/librosa.git
-python -m pip install -e librosa
+git clone https://github.com/zanadu777/iron-librosa.git
+cd iron-librosa
+python -m pip install -e .
 ```
 
-By calling `pip list` you should see `librosa` now as an installed package:
+By calling `pip list` you should see `iron-librosa` now as an installed package:
 ```
-librosa (0.x.x, /path/to/librosa)
+iron-librosa (0.x.x, /path/to/iron-librosa)
 ```
 
 ---
 
-[Back To Top ↥](#librosa)
+[Back To Top ↥](#iron-librosa)
 
 ### Hints for the Installation
 
@@ -176,7 +243,7 @@ python -m pip install pygobject
 
 ---
 
-[Back To Top ↥](#librosa)
+[Back To Top ↥](#iron-librosa)
 
 ## Performance guard
 
@@ -198,7 +265,7 @@ A manual GitHub Actions workflow is also available at
 
 ---
 
-[Back To Top ↥](#librosa)
+[Back To Top ↥](#iron-librosa)
 
 ## Discussion
 
@@ -208,7 +275,7 @@ https://groups.google.com/forum/#!forum/librosa
 
 ---
 
-[Back To Top ↥](#librosa)
+[Back To Top ↥](#iron-librosa)
 
 ## Citing
 
@@ -230,4 +297,4 @@ If you want to cite librosa in a scholarly work, there are two ways to do it.
 
 ---
 
-[Back To Top ↥](#librosa)
+[Back To Top ↥](#iron-librosa)

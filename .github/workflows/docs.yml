@@ -59,6 +59,9 @@ jobs:
             conda info -a
             conda list
 
+        - name: Install Rust toolchain
+          uses: dtolnay/rust-toolchain@stable
+
         - name: Install librosa
           shell: bash -l {0}
           run: python -m pip install --upgrade-strategy only-if-needed -e .[docs]
@@ -72,6 +75,7 @@ jobs:
             ln -srf build/html/$(./scripts/get_latest_release.sh) build/html/latest  # auto-link the latest tag
 
         - name: Push to web
+          if: github.repository == 'librosa/librosa' && secrets.DOCS_DEPLOY_KEY != ''
           uses: tagus/git-deploy@v0.4.1
           with:
             changes: build/html

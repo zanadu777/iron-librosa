@@ -1625,7 +1625,7 @@ def iirt(
 
     First, ``y`` is resampled as needed according to the provided ``sample_rates``.
 
-    Then, a filterbank with with ``n`` band-pass filters is designed.
+    Then, a filterbank with ``n`` band-pass filters is designed.
 
     The resampled input signals are processed by the filterbank as a whole.
     (`scipy.signal.filtfilt` resp. `sosfiltfilt` is used to make the phase linear.)
