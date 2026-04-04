@@ -60,7 +60,7 @@ for f in 0..n_bins {
 ### Task 3: 2D Decomposition Support
 **Objective:** Add parallel processing for multi-dimensional spectrograms
 
-**Current:** Reshapes ND → 3D, processes batch
+**Current:** Reshapes N-D → 3D, processes batch
 **Proposed:** Optimize for typical stereo/multichannel cases
 
 **Files:** `librosa/decompose.py` (lines 401-432)
