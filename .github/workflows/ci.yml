@@ -137,7 +137,7 @@ jobs:
 
         - name: Run pytest
           shell: bash -l {0}
-          run: pytest
+          run: PYTHONPATH=Benchmarks/scripts pytest
 
         - name: Upload coverage to Codecov
           if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
