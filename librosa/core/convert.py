@@ -1214,6 +1214,8 @@ def hz_to_mel(
         and hasattr(_rust_ext, "hz_to_mel")
         and frequencies.ndim == 1
     ):
+        # Coerce htk from numpy scalar/array to native Python bool for Rust dispatch
+        htk = bool(np.asarray(htk).item())
         freq_rust = np.ascontiguousarray(frequencies, dtype=np.float64)
         return _rust_ext.hz_to_mel(freq_rust, htk=htk)
     # --- end Rust acceleration ---
@@ -1295,6 +1297,8 @@ def mel_to_hz(
 
     # --- iron-librosa: Rust acceleration ---
     if RUST_AVAILABLE and hasattr(_rust_ext, "mel_to_hz") and mels.ndim == 1:
+        # Coerce htk from numpy scalar/array to native Python bool for Rust dispatch
+        htk = bool(np.asarray(htk).item())
         mels_rust = np.ascontiguousarray(mels, dtype=np.float64)
         return _rust_ext.mel_to_hz(mels_rust, htk=htk)
     # --- end Rust acceleration ---
