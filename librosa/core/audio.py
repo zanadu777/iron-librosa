@@ -25,7 +25,7 @@ from ..util.decorators import deprecated
 from ..util.deprecation import Deprecated, rename_kw
 from .._typing import _FloatLike_co, _IntLike_co, _SequenceLike
 
-from typing import Any, BinaryIO, Callable, Generator, Optional, Tuple, Union
+from typing import Any, BinaryIO, Callable, Generator, Optional, Tuple, Union, cast
 from numpy.typing import DTypeLike
 
 # Lazy-load optional dependencies
@@ -241,7 +241,7 @@ def __audioread_load(path, offset, duration, dtype: DTypeLike):
 
     if isinstance(path, tuple(audioread.available_backends())):
         # If we have an audioread object already, don't bother opening
-        reader = path
+        reader = cast(audioread.AudioFile, path)
     else:
         # If the input was not an audioread object, try to open it
         reader = audioread.audio_open(path)
@@ -1778,7 +1778,7 @@ def mu_expand(
     >>> y = librosa.mu_compress(x, quantize=True)
     >>> y
     array([-128, -124, -120, -116, -110, -102,  -91,  -66,   66,   91,  102,
-            110,  116,  120,  124,  127])
+           110,  116,  120,  124,  127])
     >>> z = librosa.mu_expand(y, quantize=True)
     array([-1.        , -0.84027248, -0.70595818, -0.59301377, -0.4563785 ,
            -0.32155973, -0.19817918, -0.06450245,  0.06450245,  0.19817918,

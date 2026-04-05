@@ -19,7 +19,7 @@ from .._rust_bridge import _rust_ext, RUST_AVAILABLE
 from ..util import Deprecated
 from ..util.exceptions import ParameterError
 from numpy.typing import ArrayLike
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union, cast
 from .._typing import _WindowSpec, _PadMode, _PadModeSTFT
 
 __all__ = ["estimate_tuning", "pitch_tuning", "piptrack", "yin", "pyin"]
@@ -433,9 +433,10 @@ def piptrack(
             stop_bin = int(np.searchsorted(fft_freqs, fmax, side="left"))
 
             if np.isscalar(ref_value):
+                ref_scalar = cast(Union[int, float, complex, np.generic], ref_value)
                 ref_flat = np.full(
                     (_piptrack_channel_count, S.shape[-1]),
-                    np.abs(ref_value),
+                    np.abs(ref_scalar),
                     dtype=S.dtype,
                 )
             elif isinstance(ref_value, np.ndarray) and ref_value.dtype == S.dtype:
