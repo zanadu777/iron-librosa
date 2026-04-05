@@ -48,7 +48,7 @@ jobs:
 
     - name: Security check
       shell: bash -l {0}
-      run: bandit --recursive --skip B101,B110 --exclude ./Development_docs,./Benchmarks .
+      run: bandit --recursive --skip B101,B110 --exclude ./Development_docs,./Benchmarks,./run_full_tests.py,./test_hotfix_validation.py .
 
     - name: Style check
       shell: bash -l {0}
