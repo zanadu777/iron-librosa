@@ -71,7 +71,7 @@ jobs:
                       envfile: ".github/environment-ci.yml"
 
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v6
           with:
             submodules: true
 
@@ -101,7 +101,7 @@ jobs:
             esac
 
         - name: Cache conda
-          uses: actions/cache@v4
+          uses: actions/cache@v5
           env:
             # Increase this value to reset cache if etc/example-environment.yml has not changed
             CACHE_NUMBER: 0
@@ -110,7 +110,7 @@ jobs:
             key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.python-version }}-conda-${{ env.CACHE_NUMBER }}-${{ hashFiles( matrix.envfile ) }}
 
         - name: Install Conda environment
-          uses: conda-incubator/setup-miniconda@v3
+          uses: conda-incubator/setup-miniconda@9b650ee299f7fe47ab3a9688166e64e965c83272
           with:
             auto-update-conda: true
             python-version: ${{ matrix.python-version }}

@@ -17,18 +17,18 @@ jobs:
             channel-priority: "flexible"
             envfile: ".github/environment-lint.yml"
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0
     - name: Cache conda
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       env:
         CACHE_NUMBER: 0
       with:
         path: ~/conda_pkgs_dir
         key: ${{ runner.os }}-${{ matrix.python-version }}-conda-${{ env.CACHE_NUMBER }}-${{ hashFiles( matrix.envfile ) }}
     - name: Install conda environment
-      uses: conda-incubator/setup-miniconda@v3
+      uses: conda-incubator/setup-miniconda@9b650ee299f7fe47ab3a9688166e64e965c83272
       with: 
         auto-update-conda: false
         python-version: ${{ matrix.python-version }}
