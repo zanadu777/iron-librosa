@@ -2668,6 +2668,61 @@ def hz_to_svara_h(
 
 
 @overload
+def note_to_svara_h(
+    notes: str,
+    *,
+    Sa: str,
+    abbr: bool = ...,
+    octave: bool = ...,
+    unicode: bool = ...,
+) -> str:
+    ...
+
+
+@overload
+def note_to_svara_h(
+    notes: _IterableLike[str],
+    *,
+    Sa: str,
+    abbr: bool = ...,
+    octave: bool = ...,
+    unicode: bool = ...,
+) -> np.ndarray:
+    ...
+
+
+@overload
+def note_to_svara_h(
+    notes: Union[str, _IterableLike[str]],
+    *,
+    Sa: str,
+    abbr: bool = ...,
+    octave: bool = ...,
+    unicode: bool = ...,
+) -> Union[str, np.ndarray]:
+    ...
+
+
+def note_to_svara_h(
+    notes: Union[str, _IterableLike[str]],
+    *,
+    Sa: str,
+    abbr: bool = True,
+    octave: bool = True,
+    unicode: bool = True,
+) -> Union[str, np.ndarray]:
+    """Convert western notes to Hindustani svara.
+
+    Note that this conversion assumes 12-tone equal temperament.
+    """
+    midis = note_to_midi(notes, round_midi=False)
+
+    return midi_to_svara_h(
+        midis, Sa=note_to_midi(Sa), abbr=abbr, octave=octave, unicode=unicode
+    )
+
+
+@overload
 def midi_to_svara_c(
     midi: _FloatLike_co,
     *,
