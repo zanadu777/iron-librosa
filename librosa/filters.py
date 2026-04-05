@@ -216,8 +216,18 @@ def mel(
     >>> ax.set(ylabel='Mel filter', title='Mel filter bank')
     >>> fig.colorbar(img, ax=ax)
     """
+    # Coerce scalar numpy types from matlab fixtures (e.g. uint8 htk) to
+    # native Python scalars before any dispatch path.
+    htk = bool(np.asarray(htk).item())
+    sr = float(np.asarray(sr).item())
+    n_fft = int(np.asarray(n_fft).item())
+    n_mels = int(np.asarray(n_mels).item())
+    fmin = float(np.asarray(fmin).item())
+
     if fmax is None:
         fmax = float(sr) / 2
+    else:
+        fmax = float(np.asarray(fmax).item())
 
     # Rust fast path for common mel basis construction settings.
     # Keep Python fallback for all non-f32 / numeric-norm cases to preserve behavior.
@@ -228,12 +238,12 @@ def mel(
         and (norm is None or norm == "slaney")
     ):
         weights = _rust_ext.mel_filter_f32(
-            float(sr),
-            int(n_fft),
-            int(n_mels),
-            float(fmin),
-            float(fmax),
-            bool(htk),
+            sr,
+            n_fft,
+            n_mels,
+            fmin,
+            fmax,
+            htk,
             bool(norm == "slaney"),
         )
         # Emit empty-filter warning even on the Rust path (mirrors Python path behaviour)
