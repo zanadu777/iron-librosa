@@ -255,7 +255,7 @@ def test_plp_multi(s_multi, hop_length, win_length, tempo_min, tempo_max, prior)
     assert np.allclose(pulse[0], pulse0, atol=1e-6, rtol=1e-6)
     assert np.allclose(pulse[1], pulse1, atol=1e-6, rtol=1e-6)
 
-    # Check that they're not both the same
+    # Check that they're not all the same
     assert not np.allclose(pulse0, pulse1, atol=1e-6, rtol=1e-6)
 
 
@@ -1235,8 +1235,9 @@ def test_beat_track_multi_bpm_scalar(y_multi):
     tempo1, beats1 = librosa.beat.beat_track(y=y[1], sr=sr, sparse=False, bpm=100)
 
     assert np.isscalar(tempo)
-    assert np.allclose(tempo, tempo0)
-    assert np.allclose(tempo, tempo1)
+    tempo_scalar = float(np.asarray(tempo))
+    assert np.allclose(tempo_scalar, tempo0)
+    assert np.allclose(tempo_scalar, tempo1)
     assert np.allclose(beats[0], beats0)
     assert np.allclose(beats[1], beats1)
 
