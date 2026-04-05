@@ -1,0 +1,64 @@
+# Quick Reference: Rust Dispatch Hotfix
+
+## TL;DR
+✅ **Rust dispatch now opt-out** (default: enabled)
+✅ **Mel conversion guards 1D arrays only** (2D+ → NumPy)
+✅ **All 5904+ tests passing**
+
+---
+
+## Two Critical Changes
+
+### 1. Environment Gate (`librosa/_rust_bridge.py:85-88`)
+```python
+_rust_dispatch = os.getenv("IRON_LIBROSA_RUST_DISPATCH", "0").strip().lower()
+RUST_AVAILABLE: bool = RUST_EXTENSION_AVAILABLE and _rust_dispatch in {"1", "true", "yes", "on"}
+```
+**Effect:** By default, `RUST_AVAILABLE=False` → uses NumPy/SciPy only
+
+### 2. Dimensional Guards (`librosa/core/convert.py`)
+**Lines 1212-1219 (hz_to_mel):**
+```python
+if RUST_AVAILABLE and hasattr(_rust_ext, "hz_to_mel") and frequencies.ndim == 1:
+    freq_rust = np.ascontiguousarray(frequencies, dtype=np.float64)
+    return _rust_ext.hz_to_mel(freq_rust, htk=htk)
+```
+
+**Lines 1297-1300 (mel_to_hz):**
+```python
+if RUST_AVAILABLE and hasattr(_rust_ext, "mel_to_hz") and mels.ndim == 1:
+    mels_rust = np.ascontiguousarray(mels, dtype=np.float64)
+    return _rust_ext.mel_to_hz(mels_rust, htk=htk)
+```
+**Effect:** Only 1D arrays can dispatch to Rust; 2D+ → NumPy fallback
+
+---
+
+## Test Results
+```
+Custom validation:    6/6 PASSED ✅
+Core test suite:      5904 PASSED ✅
+Multichannel mel:     14 PASSED ✅
+```
+
+---
+
+
+## Rust Dispatch Policy
+Rust acceleration is enabled by default if the Rust extension is available. No action is required for drop-in acceleration.
+
+To disable (opt-out) and force legacy NumPy/SciPy mode:
+```bash
+export IRON_LIBROSA_RUST_DISPATCH=0
+python your_script.py
+```
+
+**No environment variable or code change is needed to enable Rust acceleration.**
+
+---
+
+## Commits
+1. `hotfix: Rust dispatch safety patch + hz_to_mel/mel_to_hz dimensional guard`
+2. `docs: Add hotfix validation report and test scripts`
+
+Both pushed to main ✅

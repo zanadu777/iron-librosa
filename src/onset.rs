@@ -1,6 +1,7 @@
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use rayon::prelude::*;
 
 fn reflect_index(mut idx: isize, n: usize) -> usize {
     if n <= 1 {
@@ -256,3 +257,111 @@ pub fn onset_flux_mean_maxfilter_f64<'py>(
     Ok(out.into_pyarray_bound(py))
 }
 
+// ── Median variants ──────────────────────────────────────────────────────────
+// Mirror onset_flux_mean_ref_* but aggregate with median; rayon-parallel over frames.
+
+fn onset_flux_median_ref_impl_f32(
+    s: ndarray::ArrayView2<'_, f32>,
+    ref_s: ndarray::ArrayView2<'_, f32>,
+    lag: usize,
+) -> PyResult<ndarray::Array2<f32>> {
+    if lag == 0 {
+        return Err(PyValueError::new_err("lag must be a positive integer"));
+    }
+    if s.shape() != ref_s.shape() {
+        return Err(PyValueError::new_err(
+            "reference spectrum shape must match input spectrum shape",
+        ));
+    }
+    let n_bins = s.shape()[0];
+    let n_frames = s.shape()[1];
+    let out_frames = n_frames.saturating_sub(lag);
+    if n_bins == 0 || out_frames == 0 {
+        return Ok(ndarray::Array2::<f32>::zeros((1, out_frames)));
+    }
+    let medians: Vec<f32> = (0..out_frames)
+        .into_par_iter()
+        .map(|t| {
+            let mut flux = vec![0.0f32; n_bins];
+            for f in 0..n_bins {
+                let diff = s[(f, t + lag)] - ref_s[(f, t)];
+                flux[f] = diff.max(0.0);
+            }
+            flux.sort_unstable_by(|a, b| {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let mid = n_bins / 2;
+            if n_bins % 2 == 0 { (flux[mid - 1] + flux[mid]) * 0.5 } else { flux[mid] }
+        })
+        .collect();
+    let mut out = ndarray::Array2::<f32>::zeros((1, out_frames));
+    for (t, &v) in medians.iter().enumerate() {
+        out[(0, t)] = v;
+    }
+    Ok(out)
+}
+
+fn onset_flux_median_ref_impl_f64(
+    s: ndarray::ArrayView2<'_, f64>,
+    ref_s: ndarray::ArrayView2<'_, f64>,
+    lag: usize,
+) -> PyResult<ndarray::Array2<f64>> {
+    if lag == 0 {
+        return Err(PyValueError::new_err("lag must be a positive integer"));
+    }
+    if s.shape() != ref_s.shape() {
+        return Err(PyValueError::new_err(
+            "reference spectrum shape must match input spectrum shape",
+        ));
+    }
+    let n_bins = s.shape()[0];
+    let n_frames = s.shape()[1];
+    let out_frames = n_frames.saturating_sub(lag);
+    if n_bins == 0 || out_frames == 0 {
+        return Ok(ndarray::Array2::<f64>::zeros((1, out_frames)));
+    }
+    let medians: Vec<f64> = (0..out_frames)
+        .into_par_iter()
+        .map(|t| {
+            let mut flux = vec![0.0f64; n_bins];
+            for f in 0..n_bins {
+                let diff = s[(f, t + lag)] - ref_s[(f, t)];
+                flux[f] = diff.max(0.0);
+            }
+            flux.sort_unstable_by(|a, b| {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let mid = n_bins / 2;
+            if n_bins % 2 == 0 { (flux[mid - 1] + flux[mid]) * 0.5 } else { flux[mid] }
+        })
+        .collect();
+    let mut out = ndarray::Array2::<f64>::zeros((1, out_frames));
+    for (t, &v) in medians.iter().enumerate() {
+        out[(0, t)] = v;
+    }
+    Ok(out)
+}
+
+#[pyfunction]
+#[pyo3(signature = (s, ref_s, lag = 1))]
+pub fn onset_flux_median_ref_f32<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    ref_s: PyReadonlyArray2<'py, f32>,
+    lag: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    let out = onset_flux_median_ref_impl_f32(s.as_array(), ref_s.as_array(), lag)?;
+    Ok(out.into_pyarray_bound(py))
+}
+
+#[pyfunction]
+#[pyo3(signature = (s, ref_s, lag = 1))]
+pub fn onset_flux_median_ref_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    ref_s: PyReadonlyArray2<'py, f64>,
+    lag: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let out = onset_flux_median_ref_impl_f64(s.as_array(), ref_s.as_array(), lag)?;
+    Ok(out.into_pyarray_bound(py))
+}

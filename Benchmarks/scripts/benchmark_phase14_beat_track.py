@@ -12,6 +12,11 @@ from typing import Dict, List
 import numpy as np
 import librosa
 from librosa import beat as beat_mod
+from benchmark_guard import (
+    REVIEW_SPEEDUP_THRESHOLD,
+    assert_benchmark_payload_schema,
+    evaluate_speedup,
+)
 
 
 SR = 22050
@@ -47,6 +52,12 @@ def _parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Optional path to write benchmark output as JSON.",
+    )
+    parser.add_argument(
+        "--review-threshold",
+        type=float,
+        default=REVIEW_SPEEDUP_THRESHOLD,
+        help="Speedup threshold below which a case requires manual review.",
     )
     return parser.parse_args()
 
@@ -177,6 +188,34 @@ def _post_stage(onset_env, localscore, backlink, cumscore):
     return librosa.beat.__trim_beats(localscore, beats_dense, True)
 
 
+def _annotate_compare_reviews(results: list[dict], threshold: float) -> list[str]:
+    """Attach speedup/review flags to compare-mode results and return flagged labels."""
+    numpy_by_name = {
+        item["name"]: item
+        for item in results
+        if item.get("backend") == "numpy"
+    }
+
+    flagged: list[str] = []
+    for item in results:
+        if item.get("backend") == "rust":
+            base = numpy_by_name.get(item["name"])
+            if base is None:
+                item["speedup_vs_numpy"] = None
+                item["review_required"] = None
+                continue
+            speedup = base["avg_ms"] / item["avg_ms"] if item["avg_ms"] > 0 else 0.0
+            review = evaluate_speedup(speedup, threshold)
+            item["speedup_vs_numpy"] = review["speedup"]
+            item["review_required"] = review["review_required"]
+            if review["review_required"]:
+                flagged.append(f"{item['name']} ({speedup:.2f}x)")
+        else:
+            item["speedup_vs_numpy"] = 1.0
+            item["review_required"] = False
+    return flagged
+
+
 
 def main() -> None:
     args = _parse_args()
@@ -210,18 +249,30 @@ def main() -> None:
                 out["backend"] = mode
                 results.append(out)
 
+    flagged_cases: list[str] = []
+    if args.backend == "compare":
+        flagged_cases = _annotate_compare_reviews(results, args.review_threshold)
+        if flagged_cases:
+            print("auto-review required (< threshold):")
+            for case in flagged_cases:
+                print(f"  - {case}")
+
     if args.json_out:
         payload = {
             "meta": {
                 "benchmark": "phase14_beat_track",
                 "backend": args.backend,
+                "review_threshold": args.review_threshold,
                 "platform": platform.platform(),
                 "python": platform.python_version(),
                 "numpy": np.__version__,
                 "librosa": getattr(librosa, "__version__", "unknown"),
             },
+            "auto_review_cases": flagged_cases,
+            "rows": results,
             "cases": results,
         }
+        assert_benchmark_payload_schema(payload, "phase14_beat_track")
         with open(args.json_out, "w", encoding="utf-8") as fdesc:
             json.dump(payload, fdesc, indent=2)
         print(f"wrote json report: {args.json_out}")

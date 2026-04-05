@@ -1,3 +1,10 @@
+from __future__ import annotations
+__all__ = [
+    "evaluate_speedup",
+    "has_benchmark_payload_schema",
+    "assert_benchmark_payload_schema",
+    "REVIEW_SPEEDUP_THRESHOLD",
+]
 """Simple performance guard for MFCC and onset benchmarks.
 
 Runs a small subset of MFCC benchmarks and exits non-zero if speedups drop
@@ -5,8 +12,6 @@ below configurable thresholds.
 
 Default thresholds are conservative to reduce false positives on noisy hosts.
 """
-
-from __future__ import annotations
 
 import argparse
 import importlib
@@ -22,6 +27,42 @@ HOP = 512
 N_MELS = 128
 N_MFCC = 20
 ONSET_SHAPES = [(128, 2000), (256, 4000)]
+REVIEW_SPEEDUP_THRESHOLD = 1.5
+REQUIRED_BENCHMARK_PAYLOAD_KEYS = ("meta", "auto_review_cases", "rows")
+
+
+def evaluate_speedup(speedup: float, threshold: float = REVIEW_SPEEDUP_THRESHOLD) -> dict[str, float | bool]:
+    """Classify a speedup against the auto-review threshold."""
+    return {
+        "speedup": float(speedup),
+        "review_threshold": float(threshold),
+        "review_required": bool(speedup < threshold),
+    }
+
+
+def has_benchmark_payload_schema(payload: dict) -> bool:
+    """Return True when payload contains the standard benchmark schema keys."""
+    if not isinstance(payload, dict):
+        return False
+
+    for key in REQUIRED_BENCHMARK_PAYLOAD_KEYS:
+        if key not in payload:
+            return False
+
+    if not isinstance(payload["meta"], dict):
+        return False
+    if not isinstance(payload["auto_review_cases"], list):
+        return False
+    if not isinstance(payload["rows"], list):
+        return False
+
+    return True
+
+
+def assert_benchmark_payload_schema(payload: dict, benchmark_name: str) -> None:
+    """Raise ValueError when payload does not match the benchmark schema."""
+    if not has_benchmark_payload_schema(payload):
+        raise ValueError(f"invalid benchmark payload schema for {benchmark_name}")
 
 
 def _timeit(fn, runs: int, batches: int) -> float:
@@ -101,12 +142,19 @@ def main() -> int:
     parser.add_argument("--min-dct-speedup", type=float, default=0.80)
     parser.add_argument("--min-onset-mean-speedup", type=float, default=0.95)
     parser.add_argument("--min-onset-maxfilter-speedup", type=float, default=0.90)
+    parser.add_argument("--review-threshold", type=float, default=REVIEW_SPEEDUP_THRESHOLD)
+    parser.add_argument(
+        "--fail-on-review-required",
+        action="store_true",
+        help="Exit non-zero when any speedup is below the review threshold.",
+    )
     args = parser.parse_args()
 
     np.random.seed(args.seed)
     iron_librosa = importlib.import_module("iron_librosa")
 
     failures: list[str] = []
+    review_items: list[str] = []
 
     print("MFCC guard: full pipeline (y input)")
     for dur in args.durations:
@@ -114,10 +162,15 @@ def main() -> int:
         t_py = _mfcc_y_min(librosa, y, args.runs, args.batches)
         t_rs = _mfcc_y_min(iron_librosa, y, args.runs, args.batches)
         speed = t_py / t_rs
+        review = evaluate_speedup(speed, args.review_threshold)
         print(
             f"  {dur:2d}s  librosa={t_py*1e3:7.2f} ms  "
             f"iron={t_rs*1e3:7.2f} ms  speedup={speed:5.2f}x"
         )
+        if review["review_required"]:
+            review_items.append(
+                f"full-mfcc {dur}s speedup {speed:.2f}x < review {args.review_threshold:.2f}x"
+            )
         if speed < args.min_full_speedup:
             failures.append(
                 f"full-mfcc {dur}s speedup {speed:.2f}x < {args.min_full_speedup:.2f}x"
@@ -130,10 +183,15 @@ def main() -> int:
         t_py = _mfcc_s_min(librosa, s, args.runs, args.batches)
         t_rs = _mfcc_s_min(iron_librosa, s, args.runs, args.batches)
         speed = t_py / t_rs
+        review = evaluate_speedup(speed, args.review_threshold)
         print(
             f"  {dur:2d}s  librosa={t_py*1e3:7.3f} ms  "
             f"iron={t_rs*1e3:7.3f} ms  speedup={speed:5.2f}x"
         )
+        if review["review_required"]:
+            review_items.append(
+                f"dct-mfcc {dur}s speedup {speed:.2f}x < review {args.review_threshold:.2f}x"
+            )
         if speed < args.min_dct_speedup:
             failures.append(
                 f"dct-mfcc {dur}s speedup {speed:.2f}x < {args.min_dct_speedup:.2f}x"
@@ -147,10 +205,15 @@ def main() -> int:
             iron_librosa, s, args.runs, args.batches, lag=1, max_size=1
         )
         speed = t_py / t_rs
+        review = evaluate_speedup(speed, args.review_threshold)
         print(
             f"  {n_bins:3d}x{n_frames:<5d}  librosa={t_py*1e3:7.3f} ms  "
             f"iron={t_rs*1e3:7.3f} ms  speedup={speed:5.2f}x"
         )
+        if review["review_required"]:
+            review_items.append(
+                f"onset-mean {n_bins}x{n_frames} speedup {speed:.2f}x < review {args.review_threshold:.2f}x"
+            )
         if speed < args.min_onset_mean_speedup:
             failures.append(
                 f"onset-mean {n_bins}x{n_frames} speedup {speed:.2f}x < "
@@ -165,15 +228,29 @@ def main() -> int:
             iron_librosa, s, args.runs, args.batches, lag=2, max_size=5
         )
         speed = t_py / t_rs
+        review = evaluate_speedup(speed, args.review_threshold)
         print(
             f"  {n_bins:3d}x{n_frames:<5d}  librosa={t_py*1e3:7.3f} ms  "
             f"iron={t_rs*1e3:7.3f} ms  speedup={speed:5.2f}x"
         )
+        if review["review_required"]:
+            review_items.append(
+                f"onset-maxfilter {n_bins}x{n_frames} speedup {speed:.2f}x < review {args.review_threshold:.2f}x"
+            )
         if speed < args.min_onset_maxfilter_speedup:
             failures.append(
                 f"onset-maxfilter {n_bins}x{n_frames} speedup {speed:.2f}x < "
                 f"{args.min_onset_maxfilter_speedup:.2f}x"
             )
+
+    if review_items:
+        print("\nAUTO-REVIEW REQUIRED:")
+        for item in review_items:
+            print(f"  - {item}")
+
+    if args.fail_on_review_required and review_items:
+        print("\nFAIL: review threshold violations (strict mode)")
+        return 2
 
     if failures:
         print("\nFAIL:")

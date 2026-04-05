@@ -1,5 +1,5 @@
 # iron-librosa: Comprehensive Status Report
-## April 3, 2026
+## Last updated: 2026-04-05
 
 ---
 
@@ -7,7 +7,7 @@
 
 **iron-librosa** is a Rust acceleration layer for librosa, a popular Python audio feature extraction library. The project systematically replaces performance bottlenecks with high-speed Rust kernels while maintaining 100% API compatibility.
 
-**Current Status:** **Phases 1–5 Complete (current safe scope)** (76 Rust kernels, tested and benchmarked)
+**Current Status:** **Phases 1–15 Complete** (Rust kernels for DSP, spectral features, beat tracking DP + upstream, and more — all tested and benchmarked)
 
 ---
 
@@ -63,6 +63,39 @@
   - filters.chroma: ~2.7× to ~5.7×
   - fixed-tuning chroma_stft: ~1.7× to ~4.0×
 - **Status:** Complete for current safe scope, hardened and documented
+
+### Phases 6–13 ✅
+See individual completion reports in `Development_docs/` for:
+- Phase 6: RMS time-domain & spectral flatness
+- Phase 7: Spectral contrast
+- Phase 8: Chroma normalisation
+- Phase 9: Variable-frequency centroid / rolloff
+- Phase 10A: HPSS padding fix
+- Phase 10B: Batch parallelism (STFT / HPSS)
+- Phase 10C: HPSS optimisation
+- Phase 11: Contrast multichannel
+- Phase 12: Phase vocoder + CQT/VQT acceleration plan
+- Phase 13: CQT/VQT seam (opt-in)
+
+### Phase 14: Beat-Track DP Seam ✅ — Opt-in
+**Beat tracking dynamic-programming kernel**
+- `beat_track_dp_f32` / `beat_track_dp_f64` (`src/beat.rs`)
+- Python dispatch seam: `librosa/beat.py :: __beat_track_dp_dispatch`
+- Bridge flags: `FORCE_NUMPY_BEAT` / `FORCE_RUST_BEAT` (`IRON_LIBROSA_BEAT_BACKEND`)
+- **Performance:** DP stage is < 1% of runtime; Rust ≈ Numba (no end-to-end gain)
+- **Decision:** Opt-in only — promoted via `IRON_LIBROSA_BEAT_BACKEND=rust`
+- **Parity:** 3/3 phase-specific tests green; zero new suite failures
+- **Status:** Complete — see `PHASE14_BEAT_TRACK_COMPLETION_REPORT.md`
+
+### Phase 15: Beat-Track Upstream Acceleration ✅ — **Promoted (2.6–3.1×)**
+**Onset-strength median kernel + tempogram parallel autocorrelation**
+- `onset_flux_median_ref_f32/f64` (`src/onset.rs`) — rayon parallel median flux
+- `tempogram_ac_f32/f64` (`src/rhythm.rs`) — rustfft + rayon parallel autocorrelation
+- Dispatch injected in `librosa/onset.py` (median path) and `librosa/feature/rhythm.py`
+- **Performance:** 2.58× (30 s) to 3.07× (120 s) end-to-end `beat_track` speedup
+- **Promotion threshold met** (≥ 1.5×); now enabled by default (Rust acceleration ON unless IRON_LIBROSA_RUST_DISPATCH=0)
+- **Parity:** 10/10 Phase 15 tests + 1681 beat/onset suite tests — zero failures
+- **Status:** Complete — see `PHASE15_BEAT_UPSTREAM_COMPLETION_REPORT.md`
 
 ---
 
@@ -317,5 +350,3 @@ iron-librosa has successfully delivered a comprehensive Rust acceleration layer 
 - **Production-ready** with comprehensive benchmarking and validation
 
 **Phase 4 represents the culmination of systematic, high-impact DSP acceleration.** The project is well-positioned for Phase 5 expansion into additional spectral features, advanced decomposition methods, and performance-critical audio analysis workflows.
-
-

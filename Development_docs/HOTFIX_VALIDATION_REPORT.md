@@ -6,7 +6,7 @@
 
 A critical safety patch has been successfully applied to address Rust dispatch regressions and multi-dimensional array handling issues. The fix introduces:
 
-1. **Opt-in Rust dispatch** - Default to NumPy/SciPy for CI stability
+1. **Rust dispatch enabled by default** - Default to Rust for performance; opt-out for legacy/CI stability
 2. **Dimensional guards** - Only dispatch 1D arrays to Rust
 3. **Contiguous array conversion** - Ensure proper PyO3 array marshalling
 
@@ -18,8 +18,8 @@ A critical safety patch has been successfully applied to address Rust dispatch r
 
 **What changed:**
 - Added environment variable gate: `IRON_LIBROSA_RUST_DISPATCH`
-- Default behavior: Dispatch **disabled** (safe mode)
-- Opt-in: Set `IRON_LIBROSA_RUST_DISPATCH=1` to enable Rust paths
+- Default behavior: Dispatch **enabled** (Rust acceleration is ON by default)
+- Opt-out: Set `IRON_LIBROSA_RUST_DISPATCH=0` to force legacy NumPy/SciPy paths
 
 **Why:** 
 - Eliminates numerical regressions in CI caused by Rust path mismatches
@@ -29,8 +29,8 @@ A critical safety patch has been successfully applied to address Rust dispatch r
 **Code:**
 ```python
 # Line 85-88 in _rust_bridge.py
-_rust_dispatch = os.getenv("IRON_LIBROSA_RUST_DISPATCH", "0").strip().lower()
-RUST_AVAILABLE: bool = RUST_EXTENSION_AVAILABLE and _rust_dispatch in {"1", "true", "yes", "on"}
+_rust_dispatch = os.getenv("IRON_LIBROSA_RUST_DISPATCH", "1").strip().lower()
+RUST_AVAILABLE: bool = RUST_EXTENSION_AVAILABLE and _rust_dispatch not in {"0", "false", "no", "off"}
 ```
 
 ### 2. Mel Conversion Dimensional Guards (`librosa/core/convert.py`)
@@ -97,7 +97,7 @@ Test examples:
 ### Rust Dispatch State
 ```
 RUST_EXTENSION_AVAILABLE: True  (Rust library compiled and available)
-RUST_AVAILABLE (dispatch):   False (Disabled by default for CI safety)
+RUST_AVAILABLE (dispatch):   True (Enabled by default for Rust acceleration)
 ```
 
 ### Test Coverage
@@ -112,16 +112,16 @@ RUST_AVAILABLE (dispatch):   False (Disabled by default for CI safety)
 
 ## How to Use
 
-### Default (CI Safe Mode)
+### Default (Rust Acceleration Enabled)
 ```bash
-# All tests run with NumPy/SciPy backend
+# All tests run with Rust-accelerated backend by default
 pytest tests/test_core.py
 ```
 
-### With Rust Dispatch Enabled (Benchmarking)
+### Opt-out: Force Legacy NumPy/SciPy Dispatch
 ```bash
-# Enable Rust dispatch for performance testing
-IRON_LIBROSA_RUST_DISPATCH=1 pytest tests/test_core.py
+# Disable Rust dispatch for legacy/CI testing
+IRON_LIBROSA_RUST_DISPATCH=0 pytest tests/test_core.py
 ```
 
 ---
@@ -145,7 +145,7 @@ The patch includes guards against future regressions:
 1. **Dimensional check**: `frequencies.ndim == 1` prevents multi-dim dispatch attempts
 2. **Contiguity check**: `np.ascontiguousarray()` ensures memory layout compatibility
 3. **dtype enforcement**: `dtype=np.float64` matches Rust FFI expectations
-4. **Environment gating**: `IRON_LIBROSA_RUST_DISPATCH` prevents accidental dispatch
+4. **Environment gating**: `IRON_LIBROSA_RUST_DISPATCH` allows opt-out of Rust dispatch
 
 ---
 
@@ -177,5 +177,3 @@ Files modified:
 2. Monitor for any additional dimensional guard requirements
 3. Consider promotion of Rust paths to opt-out (once parity verified)
 4. Update documentation on IRON_LIBROSA_RUST_DISPATCH usage
-
-

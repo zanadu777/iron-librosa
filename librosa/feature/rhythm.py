@@ -14,6 +14,7 @@ from ..core.convert import tempo_frequencies, time_to_frames
 from ..core.harmonic import f0_harmonics
 from ..util.exceptions import ParameterError
 from ..filters import get_window
+from .._rust_bridge import _rust_ext, RUST_AVAILABLE
 from typing import Optional, Callable, Any
 from .._typing import _WindowSpec
 
@@ -170,10 +171,32 @@ def tempogram(
     # explicit broadcast of ac_window
     ac_window = util.expand_to(ac_window, ndim=odf_frame.ndim, axes=-2)
 
+    # Window the frames.
+    windowed = odf_frame * ac_window
+
+    # Phase 15: Rust parallel autocorrelation for 2-D (mono) input.
+    _tg_ac_suffix = "f32" if windowed.dtype == np.float32 else "f64"
+    _tg_ac_name = f"tempogram_ac_{_tg_ac_suffix}"
+    ac_result = None
+    if (
+        RUST_AVAILABLE
+        and windowed.ndim == 2
+        and windowed.dtype in (np.float32, np.float64)
+        and hasattr(_rust_ext, _tg_ac_name)
+    ):
+        n_pad = int(scipy.fft.next_fast_len(2 * windowed.shape[-2] - 1, real=True))
+        try:
+            ac_result = getattr(_rust_ext, _tg_ac_name)(
+                np.ascontiguousarray(windowed), n_pad
+            )
+        except Exception:
+            ac_result = None
+
+    if ac_result is None:
+        ac_result = autocorrelate(windowed, axis=-2)
+
     # Window, autocorrelate, and normalize
-    return util.normalize(
-        autocorrelate(odf_frame * ac_window, axis=-2), norm=norm, axis=-2
-    )
+    return util.normalize(ac_result, norm=norm, axis=-2)
 
 
 def fourier_tempogram(

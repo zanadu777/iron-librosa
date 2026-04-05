@@ -145,6 +145,21 @@ These can be installed by executing the following command:
 
     $ python -m pip install -e '.[docs]'
     
+Rust Phase Development
+----------------------
+
+When contributing a new Rust acceleration phase:
+
+> **A performance review is a mandatory gate before any phase commit.**
+> Code-complete and passing parity tests are necessary but not sufficient.
+> See `Development_docs/PHASE_COMPLETION_PROCESS.md` for the full
+> step-by-step checklist, minimum speedup thresholds, and required
+> benchmark artifacts.
+
+The required sequence for every phase is:
+
+    Code Complete → Parity Tests Green → Perf Review → Commit / Promotion Decision
+
 Note
 ----
 This document was gleefully borrowed from [scikit-learn](http://scikit-learn.org/).

@@ -20,6 +20,7 @@ mod tuning;
 mod phase_vocoder;
 mod cqt_vqt;
 mod beat;
+mod rhythm;
 
 /// The iron-librosa Rust extension module (`librosa._rust`).
 #[pymodule]
@@ -62,6 +63,8 @@ fn iron_librosa_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(onset::onset_flux_mean_f64, m)?)?;
     m.add_function(wrap_pyfunction!(onset::onset_flux_mean_ref_f64, m)?)?;
     m.add_function(wrap_pyfunction!(onset::onset_flux_mean_maxfilter_f64, m)?)?;
+    m.add_function(wrap_pyfunction!(onset::onset_flux_median_ref_f32, m)?)?;
+    m.add_function(wrap_pyfunction!(onset::onset_flux_median_ref_f64, m)?)?;
 
     // ----- istft (Inverse STFT) -----
     m.add_function(wrap_pyfunction!(istft::istft_f32, m)?)?;
@@ -132,6 +135,10 @@ fn iron_librosa_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ----- beat (phase 14 seam) -----
     m.add_function(wrap_pyfunction!(beat::beat_track_dp_f32, m)?)?;
     m.add_function(wrap_pyfunction!(beat::beat_track_dp_f64, m)?)?;
+
+    // ----- rhythm (phase 15 seam) -----
+    m.add_function(wrap_pyfunction!(rhythm::tempogram_ac_f32, m)?)?;
+    m.add_function(wrap_pyfunction!(rhythm::tempogram_ac_f64, m)?)?;
 
     Ok(())
 }

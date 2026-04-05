@@ -90,11 +90,10 @@ Stage improvement (120 s):
 > Minimum threshold: ≥ 1.5× on medium single-channel.
 > Achieved: **2.6–3.1×** — threshold exceeded on all workloads.
 
-The Rust upstream paths are enabled via:
+Rust acceleration is now enabled by default. To disable (opt-out), set:
 
 ```powershell
-$env:IRON_LIBROSA_RUST_DISPATCH = "1"
-python your_script.py
+$env:IRON_LIBROSA_RUST_DISPATCH = "0"
 ```
 
 The default remains conservative (NumPy) pending broader CI validation.
@@ -128,4 +127,3 @@ next release after smoke testing on Linux/macOS.
 - [x] Full beat/onset suite green (1681/0)
 - [x] Benchmark captured — **2.6–3.1× speedup vs NumPy**
 - [x] Promotion decision: **Promote** (opt-in, threshold exceeded)
-

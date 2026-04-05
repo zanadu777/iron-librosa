@@ -13,6 +13,11 @@ from typing import Any, Dict, List
 import numpy as np
 import librosa
 from librosa.core import constantq as cqt_mod
+from benchmark_guard import (
+    REVIEW_SPEEDUP_THRESHOLD,
+    assert_benchmark_payload_schema,
+    evaluate_speedup,
+)
 
 
 SR = 22050
@@ -216,16 +221,20 @@ def _bench_case(name: str, y: np.ndarray, repeats: int) -> Dict[str, Any]:
     }
 
     if rust_ready:
+        cqt_review = evaluate_speedup(cqt_py_avg / cqt_avg, REVIEW_SPEEDUP_THRESHOLD)
+        vqt_review = evaluate_speedup(vqt_py_avg / vqt_avg, REVIEW_SPEEDUP_THRESHOLD)
         result.update(
             {
                 "cqt_py_avg_ms": cqt_py_avg,
                 "cqt_py_min_ms": cqt_py_min,
                 "cqt_avg_speedup": cqt_py_avg / cqt_avg,
                 "cqt_min_speedup": cqt_py_min / cqt_min,
+                "cqt_review_required": cqt_review["review_required"],
                 "vqt_py_avg_ms": vqt_py_avg,
                 "vqt_py_min_ms": vqt_py_min,
                 "vqt_avg_speedup": vqt_py_avg / vqt_avg,
                 "vqt_min_speedup": vqt_py_min / vqt_min,
+                "vqt_review_required": vqt_review["review_required"],
             }
         )
 
@@ -253,6 +262,12 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to write machine-readable benchmark output as JSON.",
     )
+    parser.add_argument(
+        "--review-threshold",
+        type=float,
+        default=REVIEW_SPEEDUP_THRESHOLD,
+        help="Speedup threshold below which cases are flagged for review.",
+    )
     return parser.parse_args()
 
 
@@ -268,6 +283,26 @@ def main() -> None:
         y = _signal(seconds=seconds, seed=7000 + seconds)
         case_results.append(_bench_case(f"mono-{seconds:>2}s", y, repeats=args.repeats))
         case_results.append(_bench_case(f"stereo-{seconds:>2}s", _stereo(y), repeats=args.repeats))
+
+    auto_review_cases: List[str] = []
+    for case in case_results:
+        if not case.get("rust_available"):
+            continue
+
+        cqt_review = evaluate_speedup(case["cqt_avg_speedup"], args.review_threshold)
+        vqt_review = evaluate_speedup(case["vqt_avg_speedup"], args.review_threshold)
+        case["cqt_review_required"] = cqt_review["review_required"]
+        case["vqt_review_required"] = vqt_review["review_required"]
+
+        if cqt_review["review_required"]:
+            auto_review_cases.append(f"{case['name']}::cqt ({case['cqt_avg_speedup']:.2f}x)")
+        if vqt_review["review_required"]:
+            auto_review_cases.append(f"{case['name']}::vqt ({case['vqt_avg_speedup']:.2f}x)")
+
+    if auto_review_cases:
+        print("auto-review required (< threshold):")
+        for item in auto_review_cases:
+            print(f"  - {item}")
 
     print("-" * 72)
     print("Internal stage profile (reference: mono-30s)")
@@ -298,6 +333,7 @@ def main() -> None:
             "meta": {
                 "benchmark": "phase12_cqt_vqt",
                 "rust_available": _has_rust_backend(),
+                "review_threshold": args.review_threshold,
                 "sr": SR,
                 "durations": args.durations,
                 "repeats": args.repeats,
@@ -306,9 +342,12 @@ def main() -> None:
                 "numpy": np.__version__,
                 "librosa": getattr(librosa, "__version__", "unknown"),
             },
+            "auto_review_cases": auto_review_cases,
+            "rows": case_results,
             "cases": case_results,
             "stage_profiles": stage_profiles,
         }
+        assert_benchmark_payload_schema(payload, "phase12_cqt_vqt")
         with open(args.json_out, "w", encoding="utf-8") as fdesc:
             json.dump(payload, fdesc, indent=2)
         print(f"wrote json report: {args.json_out}")

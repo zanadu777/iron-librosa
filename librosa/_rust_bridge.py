@@ -82,7 +82,8 @@ except ImportError:
 # Keep extension availability separate from dispatch policy.
 RUST_EXTENSION_AVAILABLE: bool = _rust_ext is not None
 
-# Global dispatch gate: default to safe NumPy/SciPy parity in CI and production.
-# Set IRON_LIBROSA_RUST_DISPATCH=1 to enable Rust accelerated dispatch paths.
-_rust_dispatch = os.getenv("IRON_LIBROSA_RUST_DISPATCH", "0").strip().lower()
-RUST_AVAILABLE: bool = RUST_EXTENSION_AVAILABLE and _rust_dispatch in {"1", "true", "yes", "on"}
+
+# Global dispatch gate: default to Rust accelerated dispatch paths unless explicitly disabled.
+# Set IRON_LIBROSA_RUST_DISPATCH=0 to force legacy NumPy/SciPy parity mode.
+_rust_dispatch = os.getenv("IRON_LIBROSA_RUST_DISPATCH", "1").strip().lower()
+RUST_AVAILABLE: bool = RUST_EXTENSION_AVAILABLE and _rust_dispatch not in {"0", "false", "no", "off"}

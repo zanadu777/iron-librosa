@@ -251,14 +251,24 @@ python -m pip install pygobject
 This repository includes a lightweight MFCC performance guard script:
 
 ```bash
-python -u benchmarks/scripts/benchmark_guard.py
+python -u Benchmarks/scripts/benchmark_guard.py
 ```
 
 Useful options:
 
 ```bash
-python -u benchmarks/scripts/benchmark_guard.py --runs 10
-python -u benchmarks/scripts/benchmark_guard.py --min-full-speedup 1.00 --min-dct-speedup 1.00
+python -u Benchmarks/scripts/benchmark_guard.py --runs 10
+python -u Benchmarks/scripts/benchmark_guard.py --review-threshold 1.5
+python -u Benchmarks/scripts/benchmark_guard.py --review-threshold 1.5 --fail-on-review-required
+```
+
+Policy: any measured speedup below `1.5x` is automatically flagged as
+`AUTO-REVIEW REQUIRED`.
+
+Validate benchmark artifact schema (`meta`, `auto_review_cases`, `rows`):
+
+```bash
+python -u Benchmarks/scripts/validate_benchmark_payloads.py --paths Benchmarks/results/*.json
 ```
 
 A manual GitHub Actions workflow is also available at

@@ -210,4 +210,3 @@ pub fn beat_track_dp_f64<'py>(
         cumscore.into_pyarray_bound(py),
     ))
 }
-

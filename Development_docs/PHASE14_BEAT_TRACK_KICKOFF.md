@@ -75,12 +75,25 @@ python Benchmarks/scripts/benchmark_phase14_beat_track.py --backend compare --js
 - Stable behavior on mono and stereo inputs.
 - Clear fallback behavior when Rust extension is unavailable.
 
+## Phase Completion Process
+
+> **Perf review is a mandatory gate before any commit — code-complete alone
+> is not sufficient.**  Full checklist:
+> `Development_docs/PHASE_COMPLETION_PROCESS.md`
+
+The required sequence is:
+
+```
+Code Complete  →  Parity Tests Green  →  Perf Review  →  Commit / Promotion Decision
+```
+
 ## Current Status
 
 - [x] Kickoff scope documented
-- [ ] Baseline profile captured
-- [ ] First Rust seam implemented
-- [ ] Parity suite green with Rust path
-- [ ] Benchmark delta captured
-- [ ] Promotion decision documented
+- [x] Baseline profile captured
+- [x] First Rust seam implemented (`beat_track_dp_f32` / `beat_track_dp_f64` in `src/beat.rs`)
+- [x] Parity suite green with Rust path (3/3 tests pass)
+- [x] Benchmark delta captured and saved to `Benchmarks/results/phase14_beat_track_final.json`
+- [x] **Perf review completed** — DP is <1% of runtime; Rust ≈ Numba for this stage
+- [x] Promotion decision documented — **Opt-in** (see `PHASE14_BEAT_TRACK_COMPLETION_REPORT.md`)
 

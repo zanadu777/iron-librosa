@@ -39,3 +39,26 @@ def test_payload_schema_rejects_wrong_types():
     }
     assert not benchmark_guard.has_benchmark_payload_schema(payload)
 
+
+def test_assert_payload_schema_accepts_valid_payload():
+    payload = {
+        "meta": {"benchmark": "demo"},
+        "auto_review_cases": [],
+        "rows": [],
+    }
+    benchmark_guard.assert_benchmark_payload_schema(payload, "demo")
+
+
+def test_assert_payload_schema_raises_for_invalid_payload():
+    payload = {
+        "meta": {"benchmark": "demo"},
+        "auto_review_cases": [],
+    }
+    try:
+        benchmark_guard.assert_benchmark_payload_schema(payload, "demo")
+    except ValueError as exc:
+        assert "invalid benchmark payload schema" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for invalid payload schema")
+
+

@@ -73,6 +73,8 @@ These do not block CPU-complete baseline, but must be tracked.
     - `benchmark_phase5_spectral.py`
     - `benchmark_phase5_tuning.py`
     - `benchmark_phase11_contrast_multichannel.py`
+- [ ] Any benchmark result with speedup `< 1.5x` has an explicit auto-review note and rationale. (`REQUIRED`)
+  - Evidence: benchmark JSON includes `review_required=true` and phase report includes decision/risk notes.
 - [x] Results archived to a dated text file in repo root. (`PASS`)
   - Captured: `cpu_complete_eval_20260404.txt`
 

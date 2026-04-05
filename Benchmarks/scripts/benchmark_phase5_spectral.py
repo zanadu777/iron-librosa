@@ -10,13 +10,21 @@ Sections
   6. Public API spectral_contrast Rust vs forced Python fallback (Phase 7)
 """
 
+import argparse
 import importlib
+import json
+import platform
 import time
 from contextlib import contextmanager
 
 import numpy as np
 import librosa
 from librosa._rust_bridge import _rust_ext, RUST_AVAILABLE
+from benchmark_guard import (
+    REVIEW_SPEEDUP_THRESHOLD,
+    assert_benchmark_payload_schema,
+    evaluate_speedup,
+)
 
 N_RUNS = 10
 SR = 22050
@@ -41,6 +49,24 @@ def _section(title):
 
 def _row(label, avg, minv):
     print(f"  {label:<24s} avg={avg*1e3:8.3f} ms  min={minv*1e3:8.3f} ms")
+
+
+def _capture_review(rows, auto_review_cases, section: str, case: str, py_min: float, rust_min: float, threshold: float):
+    speed = py_min / rust_min
+    review = evaluate_speedup(speed, threshold)
+    rows.append(
+        {
+            "section": section,
+            "case": case,
+            "py_min_ms": py_min * 1e3,
+            "rust_min_ms": rust_min * 1e3,
+            "speedup": review["speedup"],
+            "review_required": review["review_required"],
+        }
+    )
+    if review["review_required"]:
+        auto_review_cases.append(f"{section} {case} ({speed:.2f}x)")
+    return speed
 
 
 @contextmanager
@@ -146,7 +172,7 @@ def bench_public_api(iron_librosa):
         _row("bandwidth iron (provided c)", rs_avg, rs_min)
 
 
-def bench_public_forced_baseline():
+def bench_public_forced_baseline(rows, auto_review_cases, review_threshold: float):
     _section("Section 4: public API Rust vs forced Python fallback")
 
     for n_fft, n_frames in SIZES:
@@ -175,18 +201,21 @@ def bench_public_forced_baseline():
 
         _row("rolloff rust on", rs_avg, rs_min)
         _row("rolloff forced py", py_avg, py_min)
-        print(f"  speedup rolloff         {py_min/rs_min:8.2f}x")
+        speed = _capture_review(rows, auto_review_cases, "spectral_rolloff", f"n_fft={n_fft},frames={n_frames}", py_min, rs_min, review_threshold)
+        print(f"  speedup rolloff         {speed:8.2f}x")
 
         _row("bandwidth auto rust", bw_auto_rs_avg, bw_auto_rs_min)
         _row("bandwidth auto py", bw_auto_py_avg, bw_auto_py_min)
-        print(f"  speedup bw auto         {bw_auto_py_min/bw_auto_rs_min:8.2f}x")
+        speed = _capture_review(rows, auto_review_cases, "spectral_bandwidth_auto", f"n_fft={n_fft},frames={n_frames}", bw_auto_py_min, bw_auto_rs_min, review_threshold)
+        print(f"  speedup bw auto         {speed:8.2f}x")
 
         _row("bandwidth prov rust", bw_prov_rs_avg, bw_prov_rs_min)
         _row("bandwidth prov py", bw_prov_py_avg, bw_prov_py_min)
-        print(f"  speedup bw provided     {bw_prov_py_min/bw_prov_rs_min:8.2f}x")
+        speed = _capture_review(rows, auto_review_cases, "spectral_bandwidth_provided", f"n_fft={n_fft},frames={n_frames}", bw_prov_py_min, bw_prov_rs_min, review_threshold)
+        print(f"  speedup bw provided     {speed:8.2f}x")
 
 
-def bench_public_rms_time_forced_baseline():
+def bench_public_rms_time_forced_baseline(rows, auto_review_cases, review_threshold: float):
     _section("Section 5: public API rms(y=...) Rust vs forced Python fallback")
     spectral_mod = importlib.import_module("librosa.feature.spectral")
 
@@ -212,10 +241,11 @@ def bench_public_rms_time_forced_baseline():
 
         _row("rms(y) rust on", rs_avg, rs_min)
         _row("rms(y) forced py", py_avg, py_min)
-        print(f"  speedup rms(y)          {py_min/rs_min:8.2f}x")
+        speed = _capture_review(rows, auto_review_cases, "rms_time", f"frame_length={n_fft},frames={n_frames}", py_min, rs_min, review_threshold)
+        print(f"  speedup rms(y)          {speed:8.2f}x")
 
 
-def bench_public_flatness_forced_baseline():
+def bench_public_flatness_forced_baseline(rows, auto_review_cases, review_threshold: float):
     _section("Section 6: public API spectral_flatness Rust vs forced Python fallback")
 
     for n_fft, n_frames in SIZES:
@@ -241,14 +271,16 @@ def bench_public_flatness_forced_baseline():
 
         _row("flatness rust (p=2)", rs_avg, rs_min)
         _row("flatness py   (p=2)", py_avg, py_min)
-        print(f"  speedup p=2             {py_min/rs_min:8.2f}x")
+        speed = _capture_review(rows, auto_review_cases, "spectral_flatness_p2", f"n_fft={n_fft},frames={n_frames}", py_min, rs_min, review_threshold)
+        print(f"  speedup p=2             {speed:8.2f}x")
 
         _row("flatness rust (p=1)", rs_p1_avg, rs_p1_min)
         _row("flatness py   (p=1)", py_p1_avg, py_p1_min)
-        print(f"  speedup p=1             {py_p1_min/rs_p1_min:8.2f}x")
+        speed = _capture_review(rows, auto_review_cases, "spectral_flatness_p1", f"n_fft={n_fft},frames={n_frames}", py_p1_min, rs_p1_min, review_threshold)
+        print(f"  speedup p=1             {speed:8.2f}x")
 
 
-def bench_public_contrast_forced_baseline():
+def bench_public_contrast_forced_baseline(rows, auto_review_cases, review_threshold: float):
     _section("Section 7: public API spectral_contrast Rust vs forced Python fallback")
 
     for n_fft, n_frames in SIZES:
@@ -280,16 +312,28 @@ def bench_public_contrast_forced_baseline():
 
             _row("contrast rust (q=0.02)", rs_avg, rs_min)
             _row("contrast py   (q=0.02)", py_avg, py_min)
-            print(f"  speedup q=0.02          {py_min/rs_min:8.2f}x")
+            speed = _capture_review(rows, auto_review_cases, "spectral_contrast_q002", f"{label},n_fft={n_fft},frames={n_frames}", py_min, rs_min, review_threshold)
+            print(f"  speedup q=0.02          {speed:8.2f}x")
 
             _row("contrast rust (q=0.01)", rs_q01_avg, rs_q01_min)
             _row("contrast py   (q=0.01)", py_q01_avg, py_q01_min)
-            print(f"  speedup q=0.01          {py_q01_min/rs_q01_min:8.2f}x")
+            speed = _capture_review(rows, auto_review_cases, "spectral_contrast_q001", f"{label},n_fft={n_fft},frames={n_frames}", py_q01_min, rs_q01_min, review_threshold)
+            print(f"  speedup q=0.01          {speed:8.2f}x")
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Phase 5 spectral benchmark")
+    parser.add_argument("--review-threshold", type=float, default=REVIEW_SPEEDUP_THRESHOLD)
+    parser.add_argument("--json-out", type=str, default=None)
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
+    args = _parse_args()
     np.random.seed(2051)
     iron_librosa = importlib.import_module("iron_librosa")
+    rows = []
+    auto_review_cases = []
 
     print("=" * 72)
     print("Phase 5 kickoff benchmark (rolloff + bandwidth)")
@@ -299,8 +343,31 @@ if __name__ == "__main__":
     bench_raw_rolloff()
     bench_raw_bandwidth()
     bench_public_api(iron_librosa)
-    bench_public_forced_baseline()
-    bench_public_rms_time_forced_baseline()
-    bench_public_flatness_forced_baseline()
-    bench_public_contrast_forced_baseline()
+    bench_public_forced_baseline(rows, auto_review_cases, args.review_threshold)
+    bench_public_rms_time_forced_baseline(rows, auto_review_cases, args.review_threshold)
+    bench_public_flatness_forced_baseline(rows, auto_review_cases, args.review_threshold)
+    bench_public_contrast_forced_baseline(rows, auto_review_cases, args.review_threshold)
+
+    if auto_review_cases:
+        print("\nauto-review required (< threshold):")
+        for item in auto_review_cases:
+            print(f"  - {item}")
+
+    if args.json_out:
+        payload = {
+            "meta": {
+                "benchmark": "phase5_spectral",
+                "review_threshold": args.review_threshold,
+                "platform": platform.platform(),
+                "python": platform.python_version(),
+                "numpy": np.__version__,
+                "librosa": getattr(librosa, "__version__", "unknown"),
+            },
+            "auto_review_cases": auto_review_cases,
+            "rows": rows,
+        }
+        assert_benchmark_payload_schema(payload, "phase5_spectral")
+        with open(args.json_out, "w", encoding="utf-8") as fdesc:
+            json.dump(payload, fdesc, indent=2)
+        print(f"wrote json report: {args.json_out}")
 
