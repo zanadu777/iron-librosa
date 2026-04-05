@@ -112,7 +112,7 @@ jobs:
             auto-update-conda: true
             python-version: ${{ matrix.python-version }}
             add-pip-as-python-dependency: true
-            auto-activate-base: false
+            auto-activate: false
             activate-environment: test
             channel-priority: ${{ matrix.channel-priority }}
             environment-file: ${{ matrix.envfile }}
