@@ -240,11 +240,27 @@ def beat_track(
 
     # Do we have any onsets to grab?
     if not onset_envelope.any():
-        if sparse:
-            return (0.0, np.array([], dtype=int))
+        if bpm is None:
+            if sparse:
+                return (0.0, np.array([], dtype=int))
+            else:
+                return (
+                    np.zeros(shape=onset_envelope.shape[:-1], dtype=float),
+                    np.zeros_like(onset_envelope, dtype=bool),
+                )
+
+        # If tempo is user-specified, preserve it even when onset energy is empty.
+        bpm_out = np.asarray(bpm)
+        bpm_ret: Union[_FloatLike_co, np.ndarray]
+        if bpm_out.ndim == 0:
+            bpm_ret = float(bpm_out)
         else:
-            return (np.zeros(shape=onset_envelope.shape[:-1], dtype=float),
-                    np.zeros_like(onset_envelope, dtype=bool))
+            bpm_ret = bpm_out
+
+        if sparse:
+            return (bpm_ret, np.array([], dtype=int))
+
+        return (bpm_ret, np.zeros_like(onset_envelope, dtype=bool))
 
     # Estimate BPM if one was not provided
     if bpm is None:

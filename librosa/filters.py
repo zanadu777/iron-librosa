@@ -227,7 +227,7 @@ def mel(
         and np.dtype(dtype) == np.float32
         and (norm is None or norm == "slaney")
     ):
-        return _rust_ext.mel_filter_f32(
+        weights = _rust_ext.mel_filter_f32(
             float(sr),
             int(n_fft),
             int(n_mels),
@@ -236,6 +236,17 @@ def mel(
             bool(htk),
             bool(norm == "slaney"),
         )
+        # Emit empty-filter warning even on the Rust path (mirrors Python path behaviour)
+        mel_f = mel_frequencies(n_mels + 2, fmin=fmin, fmax=fmax, htk=htk)
+        if not np.all((mel_f[:-2] == 0) | (weights.max(axis=1) > 0)):
+            warnings.warn(
+                "Empty filters detected in mel frequency basis. "
+                "Some channels will produce empty responses. "
+                "Try increasing your sampling rate (and fmax) or "
+                "reducing n_mels.",
+                stacklevel=2,
+            )
+        return weights
 
     # Initialize the weights
     n_mels = int(n_mels)

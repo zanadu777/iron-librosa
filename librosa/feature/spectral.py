@@ -1125,8 +1125,10 @@ def spectral_rolloff(
 
             return np.stack(roll_frames, axis=0).reshape(*S.shape[:-2], 1, S.shape[-1])
 
-    # Pilot: variable-frequency fast path for 2-D inputs.
+    # Pilot variable-frequency path is disabled until full parity is proven.
     if (
+        False
+        and
         RUST_AVAILABLE
         and S.dtype in (np.float32, np.float64)
         and S.ndim == 2

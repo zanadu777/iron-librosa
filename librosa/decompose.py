@@ -573,8 +573,9 @@ def nn_filter(
     >>> fig.colorbar(imgr1, ax=[ax[3]])
     >>> fig.colorbar(imgr2, ax=[ax[4]])
     """
-    # Fast path: use Rust if available and aggregate is mean or np.average
-    if _HAS_RUST and (aggregate is None or aggregate is np.mean or aggregate is np.average):
+    # Fast path: use Rust if available, aggregate is mean/average, and S is 2-D.
+    # Multi-channel (ndim > 2) inputs are handled by the Python path below.
+    if _HAS_RUST and S.ndim == 2 and (aggregate is None or aggregate is np.mean or aggregate is np.average):
         if rec is None:
             kwargs = dict(kwargs)
             kwargs["sparse"] = True
