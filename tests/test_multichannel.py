@@ -25,6 +25,11 @@ from contextlib import nullcontext as dnr
 from test_core import srand
 
 
+def _require_samplerate_for_res_type(res_type: str) -> None:
+    if res_type.startswith("sinc_") or res_type in ("linear", "zero_order_hold"):
+        pytest.importorskip("samplerate")
+
+
 @pytest.fixture(scope="module", params=["test1_44100.wav"])
 def y_multi(request):
     infile = request.param
@@ -1028,6 +1033,7 @@ def test_trim_multichannel(y_multi):
 )
 def test_resample_multichannel(y_multi, res_type):
     # Test multi-channel resampling with all backends: scipy, samplerate, resampy, soxr
+    _require_samplerate_for_res_type(res_type)
     y, sr = y_multi
 
     y_res = librosa.resample(y=y, orig_sr=sr, target_sr=sr // 2, res_type=res_type)
@@ -1045,6 +1051,7 @@ def test_resample_multichannel(y_multi, res_type):
 @pytest.mark.parametrize("x", [np.zeros((2, 2, 2, 22050))])
 def test_resample_highdim(x, res_type):
     # Just run these to verify that it doesn't crash with ndim>2
+    _require_samplerate_for_res_type(res_type)
     y = librosa.resample(x, orig_sr=22050, target_sr=11025, res_type=res_type)
 
 
@@ -1056,6 +1063,7 @@ def test_resample_highdim(x, res_type):
 )
 def test_resample_highdim_axis(x, axis, res_type):
     # Resample along the target axis
+    _require_samplerate_for_res_type(res_type)
     y = librosa.resample(
         x, orig_sr=22050, target_sr=11025, axis=axis, res_type=res_type
     )

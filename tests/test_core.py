@@ -29,6 +29,20 @@ from unittest import mock
 from typing import Any, Callable, Union, cast
 
 
+_SAMPLERATE_RES_TYPES = {
+    "linear",
+    "zero_order_hold",
+    "sinc_best",
+    "sinc_fastest",
+    "sinc_medium",
+}
+
+
+def _require_samplerate(res_type: str) -> None:
+    if res_type in _SAMPLERATE_RES_TYPES:
+        pytest.importorskip("samplerate")
+
+
 # -- utilities --#
 def files(pattern):
     test_files = glob.glob(pattern)
@@ -171,6 +185,7 @@ def resample_mono(resample_audio):
 )
 @pytest.mark.parametrize("fix", [False, True])
 def test_resample_mono(resample_mono, sr_out, res_type, fix):
+    _require_samplerate(res_type)
 
     y, sr_in = resample_mono
     y = librosa.to_mono(y)
@@ -218,6 +233,7 @@ def test_resample_mono(resample_mono, sr_out, res_type, fix):
 )
 @pytest.mark.parametrize("fix", [False, True])
 def test_resample_stereo(resample_audio, sr_out, res_type, fix):
+    _require_samplerate(res_type)
 
     y, sr_in = resample_audio
 
@@ -257,6 +273,7 @@ def test_resample_stereo(resample_audio, sr_out, res_type, fix):
 )
 @pytest.mark.parametrize("sr_out", [11025, 22050, 44100])
 def test_resample_scale(resample_mono, res_type, sr_out):
+    _require_samplerate(res_type)
 
     y, sr_in = resample_mono
 
