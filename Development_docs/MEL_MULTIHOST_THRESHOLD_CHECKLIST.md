@@ -49,7 +49,7 @@ python benchmarks/scripts/benchmark_melspectrogram.py > benchmarks/results/tmp_m
 ### Windows (PowerShell)
 
 ```powershell
-Set-Location "D:\Dev\Programming 2026\Rust\iron-librosa"
+Set-Location "<path-to-iron-librosa-repo>"
 New-Item -ItemType Directory -Path ".\benchmarks\results" -Force | Out-Null
 python -m pytest tests/test_mel_threshold_policy.py -q 2>&1 | Out-File -FilePath ".\benchmarks\results\tmp_mel_policy_windows.txt" -Encoding utf8
 python -m pytest tests/test_features.py -q -k "melspectrogram" 2>&1 | Out-File -FilePath ".\benchmarks\results\tmp_mel_features_windows.txt" -Encoding utf8

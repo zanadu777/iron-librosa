@@ -16,6 +16,7 @@ from contextlib import nullcontext as dnr
 import numpy as np
 import scipy.stats
 import librosa
+from librosa import beat as beat_mod
 
 from test_core import files, load
 
@@ -235,6 +236,49 @@ def test_beat_sparse(ysr):
     # Verify that frame indices correspond to detections
     assert np.all(beatsd[beats])
     assert not np.any(~beatsd[beats])
+
+
+def test_phase14_beat_dp_dispatch_numpy_fallback_parity(monkeypatch):
+    localscore = np.array([0.0, 0.2, 0.5, 0.3, 0.1], dtype=np.float32)
+    frames_per_beat = np.array([2.0], dtype=np.float32)
+    tightness = 100.0
+
+    monkeypatch.setattr(beat_mod, "FORCE_NUMPY_BEAT", True)
+    monkeypatch.setattr(beat_mod, "FORCE_RUST_BEAT", False)
+
+    backlink_ref, cumscore_ref = beat_mod.__beat_track_dp(localscore, frames_per_beat, tightness)
+    backlink_new, cumscore_new = beat_mod.__beat_track_dp_dispatch(localscore, frames_per_beat, tightness)
+
+    np.testing.assert_array_equal(backlink_new, backlink_ref)
+    np.testing.assert_allclose(cumscore_new, cumscore_ref)
+
+
+def test_phase14_beat_dp_dispatch_uses_rust_stub(monkeypatch):
+    localscore = np.array([0.0, 0.2, 0.5, 0.3, 0.1], dtype=np.float32)
+    frames_per_beat = np.array([2.0], dtype=np.float32)
+    tightness = 100.0
+    calls = {"n": 0}
+
+    class _RustStub:
+        def beat_track_dp_f32(self, ls, fpb, t):
+            calls["n"] += 1
+            np.testing.assert_equal(ls.dtype, np.float32)
+            np.testing.assert_equal(fpb.dtype, np.float32)
+            assert t == float(tightness)
+            backlink = np.full(ls.shape, -1, dtype=np.int32)
+            cumscore = np.cumsum(ls, dtype=np.float32)
+            return backlink, cumscore
+
+    monkeypatch.setattr(beat_mod, "FORCE_NUMPY_BEAT", False)
+    monkeypatch.setattr(beat_mod, "FORCE_RUST_BEAT", True)
+    monkeypatch.setattr(beat_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(beat_mod, "_rust_ext", _RustStub())
+
+    backlink_new, cumscore_new = beat_mod.__beat_track_dp_dispatch(localscore, frames_per_beat, tightness)
+
+    assert calls["n"] == 1
+    np.testing.assert_array_equal(backlink_new, -np.ones_like(localscore, dtype=np.int32))
+    np.testing.assert_allclose(cumscore_new, np.cumsum(localscore, dtype=np.float32))
 
 
 @pytest.mark.parametrize("hop_length", [256, 512])

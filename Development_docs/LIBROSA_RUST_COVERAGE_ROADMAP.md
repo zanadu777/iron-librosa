@@ -1,8 +1,8 @@
 # Librosa Rust Acceleration: Remaining Work Analysis
 
 **Current Date:** April 4, 2026  
-**Status:** Phase 12 CPU acceleration in progress  
-**Phase Vocoder:** ✅ COMPLETE (just promoted to production)
+**Status:** Phase 14 kickoff active  
+**Phase 13 (CQT/VQT):** ✅ COMPLETE (opt-in backend, not promoted by default)
 
 ---
 
@@ -25,8 +25,9 @@
 - **Hz/Mel Conversion** (hz_to_mel, mel_to_hz)
 - **NN Filter**
 
-### ⏳ Partially Accelerated (In Progress - Phase 12)
-- **CQT/VQT** (planning phase)
+### ⏳ Partially Accelerated (In Progress)
+- **CQT/VQT** (Rust seam implemented, opt-in via `IRON_LIBROSA_CQT_VQT_BACKEND`)
+- **Beat Tracking / Tempo** (Phase 14 kickoff)
 - **Mel Multi-Host Threshold** (cross-CPU strategy in development)
 
 ### ❌ Not Accelerated Yet (Major Gaps)
@@ -174,31 +175,31 @@ NOT ACCELERATED YET:
 
 ## 🚀 Recommended Roadmap for Full Rust Coverage
 
-### **Phase 13: CQT/VQT (Next Major Push)**
+### **Phase 13: CQT/VQT** ✅ COMPLETE
 **Duration:** 3-4 weeks  
 **Priority:** HIGH (popular, high-value)  
 **Effort:** HIGH  
 **Expected Gain:** 2.0-3.0× speedup
 
-**Tasks:**
-1. Analyze CQT algorithm (non-uniform FFT structure)
-2. Implement Rust kernel for constant-Q transform
-3. Add variable-Q support
-4. Comprehensive parity testing
-5. Benchmark & promote to default
+**Outcome:**
+1. Rust dense projection kernels added and wired
+2. Parity and regression tests passed
+3. Benchmark evidence captured
+4. Promotion decision: keep opt-in for now
+5. Reference: `Development_docs/PHASE13_CQT_VQT_COMPLETION_REPORT.md`
 
-### **Phase 14: Beat Tracking Acceleration**
+### **Phase 14: Beat Tracking Acceleration** 🔄 ACTIVE
 **Duration:** 2-3 weeks  
 **Priority:** HIGH (very popular feature)  
 **Effort:** MEDIUM  
 **Expected Gain:** 1.5-2.0× speedup
 
-**Tasks:**
-1. Analyze librosa.beat module hotspots
-2. Implement onset-based beat tracking in Rust
-3. Optimize dynamic programming for beat grid
-4. Integration testing
-5. Benchmark results
+**Kickoff Tasks:**
+1. Baseline profile: `librosa.beat.beat_track()` and tempo path
+2. Isolate DP hotspot (`librosa.beat.__beat_track_dp`) for Rust candidate seam
+3. Add parity tests for mono/stereo beat tracking outputs
+4. Add benchmark deltas for Python vs Rust candidate path
+5. Reference kickoff doc: `Development_docs/PHASE14_BEAT_TRACK_KICKOFF.md`
 
 ### **Phase 15: Effects & Advanced Transforms**
 **Duration:** 4+ weeks  
@@ -243,17 +244,13 @@ For "all features set to use Rust":
 
 ## 🎯 Summary: What's Next?
 
-### **Immediate (This Phase - Phase 12)**
-- ✅ Phase vocoder → production (DONE)
+### **Immediate (Phase 14)**
+- 🔄 Beat tracking acceleration kickoff
+- 🔄 Tempo-path hotspot profiling and seam definition
 - 🔄 Mel cross-CPU threshold strategy
-- 🔄 CQT/VQT planning
 
-### **Near-Term (Phase 13)**
-- CQT/VQT kernels (highest impact)
-- Expected: 2.0-3.0× speedup
-
-### **Medium-Term (Phase 14-15)**
-- Beat tracking optimization
+### **Near-Term (Phase 14-15)**
+- Beat tracking/tempo acceleration promotion path
 - Effects module acceleration
 - Advanced feature extraction
 
@@ -289,8 +286,8 @@ For "all features set to use Rust":
 
 ## Next Steps
 
-1. **Finalize Phase 12** (CQT/VQT planning, mel threshold strategy)
-2. **Schedule Phase 13** (CQT/VQT acceleration)
-3. **Plan Phase 14** (Beat tracking)
+1. **Run Phase 14 kickoff checklist** (`Development_docs/PHASE14_BEAT_TRACK_KICKOFF.md`)
+2. **Keep Phase 13 seam benchmarked** and revisit promotion only with clear gains
+3. **Document beat/tempo parity gates** before enabling any Rust dispatch by default
 4. **Continuous:** Benchmark improvements, validate parity
 

@@ -23,15 +23,9 @@ from ._typing import _IntLike_co, _FloatLike_co
 from . import segment
 from . import util
 from . import core
+from ._rust_bridge import _rust_ext as _rust, RUST_AVAILABLE as _HAS_RUST
 
 from .util.exceptions import ParameterError
-
-# Try to import the Rust backend
-try:
-    from librosa import _rust
-    _HAS_RUST = True
-except ImportError:
-    _HAS_RUST = False
 
 
 def decompose(
@@ -636,8 +630,7 @@ def nn_filter(
             filtered.append(filtered_ch)
         return np.stack(filtered, axis=0)
 
-    rec_s: scipy.sparse.spmatrix
-
+    # rec_s is assigned in the branches below.
     if rec is None:
         kwargs = dict(kwargs)
         kwargs["sparse"] = True

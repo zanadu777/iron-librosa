@@ -184,7 +184,7 @@ Python syntax: ✅ Valid
 ## 9. Current Workspace State
 
 ```
-D:\Dev\Programming 2026\Rust\iron-librosa/
+iron-librosa/
 ├── src/spectrum_utils.rs
 │   ├── median_filter_harmonic_f32/f64 ✅ Compiled
 │   ├── median_filter_percussive_f32/f64 ✅ Compiled

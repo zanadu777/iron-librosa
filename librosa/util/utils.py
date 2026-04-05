@@ -1764,13 +1764,11 @@ def softmask(
         raise ParameterError("power must be strictly positive")
 
     # We're working with ints, cast to float.
-    dtype = X.dtype
-    if not np.issubdtype(dtype, np.floating):
-        dtype = np.float32
+    float_dtype = X.dtype if np.issubdtype(X.dtype, np.floating) else np.float32
 
     # Re-scale the input arrays relative to the larger value
-    Z = np.maximum(X, X_ref).astype(dtype)
-    bad_idx = Z < np.finfo(dtype).tiny
+    Z = np.maximum(X, X_ref).astype(float_dtype)
+    bad_idx = Z < np.finfo(float_dtype).tiny
     Z[bad_idx] = 1
 
     # For finite power, compute the softmask

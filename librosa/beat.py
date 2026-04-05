@@ -20,6 +20,7 @@ from . import onset
 from . import util
 from .feature import fourier_tempogram
 from .feature import tempo as _tempo
+from ._rust_bridge import _rust_ext, RUST_AVAILABLE, FORCE_NUMPY_BEAT, FORCE_RUST_BEAT
 from .util.exceptions import ParameterError
 from .util.decorators import moved
 from typing import Optional, Tuple, Union
@@ -509,7 +510,7 @@ def __beat_tracker(
     localscore = __beat_local_score(__normalize_onsets(onset_envelope), frames_per_beat)
 
     # run the DP
-    backlink, cumscore = __beat_track_dp(localscore, frames_per_beat, tightness)
+    backlink, cumscore = __beat_track_dp_dispatch(localscore, frames_per_beat, tightness)
 
     # Reconstruct the beat path from backlinks
     tail = __last_beat(cumscore)
@@ -520,6 +521,43 @@ def __beat_tracker(
     beats: np.ndarray = __trim_beats(localscore, beats, trim)
 
     return beats
+
+
+def __beat_track_dp_dispatch(
+    localscore: np.ndarray, frames_per_beat: np.ndarray, tightness: float
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Dispatch beat DP to Rust when explicitly enabled and shape-compatible."""
+    if FORCE_NUMPY_BEAT or not FORCE_RUST_BEAT:
+        return __beat_track_dp(localscore, frames_per_beat, tightness)
+
+    if not RUST_AVAILABLE or _rust_ext is None:
+        return __beat_track_dp(localscore, frames_per_beat, tightness)
+
+    # First seam targets mono/static or mono/dynamic tempo vectors only.
+    if localscore.ndim != 1 or frames_per_beat.ndim != 1:
+        return __beat_track_dp(localscore, frames_per_beat, tightness)
+
+    rust_dp = None
+    ls = np.ascontiguousarray(localscore)
+    fpb = np.ascontiguousarray(frames_per_beat)
+
+    if ls.dtype == np.float32:
+        rust_dp = getattr(_rust_ext, "beat_track_dp_f32", None)
+        fpb = fpb.astype(np.float32, copy=False)
+    elif ls.dtype == np.float64:
+        rust_dp = getattr(_rust_ext, "beat_track_dp_f64", None)
+        fpb = fpb.astype(np.float64, copy=False)
+    else:
+        return __beat_track_dp(localscore, frames_per_beat, tightness)
+
+    if rust_dp is None:
+        return __beat_track_dp(localscore, frames_per_beat, tightness)
+
+    try:
+        backlink, cumscore = rust_dp(ls, fpb, float(tightness))
+        return np.asarray(backlink), np.asarray(cumscore)
+    except Exception:
+        return __beat_track_dp(localscore, frames_per_beat, tightness)
 
 
 # -- Helper functions for beat tracking

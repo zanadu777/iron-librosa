@@ -1,8 +1,15 @@
-# Next Actions: From Phase 12 to Full Rust Coverage
+# Next Actions: Phase 14 Kickoff and Follow-on Work
 
 **Current Date:** April 4, 2026  
-**Phase:** 12 (wrapping up)  
-**Next Phase:** 13 (CQT/VQT)
+**Phase:** 14 (kickoff)  
+**Previous Phase:** 13 (CQT/VQT complete, opt-in)
+
+## Phase 13 Outcome Context
+
+- Phase 13 implementation is complete.
+- CQT/VQT Rust seam is available but remains opt-in.
+- Promotion was deferred due to mixed benchmark gains on validation workloads.
+- Reference: `Development_docs/PHASE13_CQT_VQT_COMPLETION_REPORT.md`.
 
 ---
 
@@ -69,20 +76,25 @@
 
 ---
 
-## 🚀 PHASE 14 PLAN (After Phase 13)
+## 🚀 PHASE 14 PLAN (Now Active)
 
 ### **Beat Tracking Acceleration (2-3 weeks)**
 
-**Key Functions to Accelerate:**
-- `librosa.beat.beat_track()` (onset-based detection)
-- `librosa.beat.estimate_tempo()` (autocorrelation)
-- Dynamic programming for beat grid alignment
+**Primary Targets:**
+- `librosa.beat.beat_track()` orchestration path
+- `librosa.beat.__beat_track_dp` dynamic programming hotspot
+- tempo estimation path in `librosa.feature.tempo`
 
-**Speedup Target:** 1.5-2.0×
+**Speedup Target:** 1.5-2.0x while preserving exact beat-index parity gates
 
-**Dependencies:**
-- ✅ Onset detection (already Rust)
-- ⏳ Autocorrelation optimization
+**Kickoff Checklist (start immediately):**
+- [ ] Capture baseline timings for beat/tempo on mono and stereo fixtures
+- [ ] Add stage-level profiling wrapper for beat-track internals
+- [ ] Define first Rust seam and fallback guard contract
+- [ ] Add parity tests for beat frames / tempo outputs (f32/f64 where applicable)
+- [ ] Record first benchmark artifact in `Benchmarks/results/`
+
+**Kickoff doc:** `Development_docs/PHASE14_BEAT_TRACK_KICKOFF.md`
 
 ---
 

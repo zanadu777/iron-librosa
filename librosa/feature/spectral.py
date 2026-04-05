@@ -24,7 +24,7 @@ from .._rust_bridge import (
     FORCE_RUST_MEL,
     FORCE_NUMPY_MEL,
 )
-from typing import Any, Optional, Union, Collection
+from typing import Any, Optional, Union, Collection, Dict
 from typing_extensions import Literal
 from numpy.typing import DTypeLike
 from .._typing import _FloatLike_co, _WindowSpec, _PadMode, _PadModeSTFT
@@ -181,7 +181,7 @@ __all__ = [
 _MEL_RUST_WORK_THRESHOLD = 201_226_955
 
 
-def _load_external_mel_threshold_registry() -> dict[str, int]:
+def _load_external_mel_threshold_registry() -> Dict[str, int]:
     """Load optional per-profile mel thresholds from JSON file."""
     registry_path = os.getenv("IRON_LIBROSA_MEL_THRESHOLD_FILE", "").strip()
     if not registry_path:
@@ -200,7 +200,7 @@ def _load_external_mel_threshold_registry() -> dict[str, int]:
     if not isinstance(data, dict):
         return {}
 
-    out: dict[str, int] = {}
+    out: Dict[str, int] = {}
     for key, value in data.items():
         try:
             parsed = int(value)
@@ -899,6 +899,7 @@ def spectral_contrast(
             band_starts = np.asarray([m[0] for m in _band_meta], dtype=np.int64)
             band_stops = np.asarray([m[1] for m in _band_meta], dtype=np.int64)
             idx_qs = np.asarray([m[2] for m in _band_meta], dtype=np.int64)
+            assert _contrast_fused_kernel is not None
             peak_flat, valley_flat = _contrast_fused_kernel(s_flat, band_starts, band_stops, idx_qs)
             peak = np.reshape(peak_flat, shape)
             valley = np.reshape(valley_flat, shape)
@@ -937,8 +938,10 @@ def spectral_contrast(
                 for ch_idx in range(_contrast_channel_count):
                     ch = np.ascontiguousarray(sub_flat[ch_idx])
                     if S.dtype == np.float32:
+                        assert _contrast_kernel_f32 is not None
                         pk, vl = _contrast_kernel_f32(ch, q_eff)
                     else:
+                        assert _contrast_kernel_f64 is not None
                         pk, vl = _contrast_kernel_f64(ch, q_eff)
                     peak_flat[ch_idx, k, :] = pk[0]
                     valley_flat[ch_idx, k, :] = vl[0]
@@ -953,7 +956,6 @@ def spectral_contrast(
         valley[..., k, :] = np.mean(sortedr[..., :idx_q, :], axis=-2)
         peak[..., k, :] = np.mean(sortedr[..., -idx_q:, :], axis=-2)
 
-    contrast: np.ndarray
     if linear:
         contrast = peak - valley
     else:
@@ -2602,7 +2604,7 @@ def mfcc(
             M = fft.dct(S, axis=-2, type=dct_type, norm=norm)[..., :n_mfcc, :]
     else:
         fft = get_fftlib()
-        M: np.ndarray = fft.dct(S, axis=-2, type=dct_type, norm=norm)[
+        M = fft.dct(S, axis=-2, type=dct_type, norm=norm)[
             ..., :n_mfcc, :
         ]
 

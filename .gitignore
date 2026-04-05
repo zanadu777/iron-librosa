@@ -23,6 +23,8 @@ pip-log.txt
 .coverage
 .tox
 tests/result_images/
+tests/results/
+Benchmarks/results/
 
 #Translations
 *.mo
@@ -55,6 +57,12 @@ docs/auto_examples/
 .ipynb_checkpoints
 .coverage.*
 coverage.xml
+
+# Root-level mypy artifacts
+/mypy_*.txt
+/mypy_*.out
+/.mypy_cache/
+/.dmypy.json
 
 #IDE
 .idea/

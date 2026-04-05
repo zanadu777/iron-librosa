@@ -294,6 +294,7 @@ def stft(
             use_batch = rust_stft_complex_batch is not None and y_batch.shape[0] >= 4
 
             if use_batch:
+                assert rust_stft_complex_batch is not None
                 stft_batch = rust_stft_complex_batch(
                     y_batch,
                     int(n_fft),
@@ -1547,6 +1548,7 @@ def phase_vocoder(
     # dtype is complex64 or complex128, and prefer_rust=True.
     # Handles mono (ndim==2) and multichannel (ndim>2) by iterating Rust calls per-channel.
     _rust_pv_fn = None
+    _pv_float_dtype: DTypeLike = np.float32
     if prefer_rust and RUST_AVAILABLE and isinstance(D, np.ndarray) and D.ndim >= 2:
         if D.dtype == np.complex64 and hasattr(_rust_ext, "phase_vocoder_f32"):
             _rust_pv_fn = _rust_ext.phase_vocoder_f32
@@ -1962,9 +1964,10 @@ def power_to_db(
 
         if _rust_power_to_db is not None:
             flat = np.ravel(np.ascontiguousarray(magnitude))
+            ref_scalar = float(np.asarray(ref_value).item())
             return _rust_power_to_db(
                 flat,
-                ref_power=float(ref_value),
+                ref_power=ref_scalar,
                 amin=float(amin),
                 top_db=None if top_db is None else float(top_db),
             ).reshape(magnitude.shape)

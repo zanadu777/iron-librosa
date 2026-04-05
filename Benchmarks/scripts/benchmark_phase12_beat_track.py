@@ -2,13 +2,53 @@
 
 from __future__ import annotations
 
+import argparse
+from contextlib import contextmanager
+import json
+import platform
 import time
+from typing import Dict, List
 
 import numpy as np
 import librosa
+from librosa import beat as beat_mod
 
 
 SR = 22050
+
+
+@contextmanager
+def _beat_backend(mode: str):
+    old_numpy = beat_mod.FORCE_NUMPY_BEAT
+    old_rust = beat_mod.FORCE_RUST_BEAT
+    try:
+        if mode == "numpy":
+            beat_mod.FORCE_NUMPY_BEAT = True
+            beat_mod.FORCE_RUST_BEAT = False
+        elif mode == "rust":
+            beat_mod.FORCE_NUMPY_BEAT = False
+            beat_mod.FORCE_RUST_BEAT = True
+        yield
+    finally:
+        beat_mod.FORCE_NUMPY_BEAT = old_numpy
+        beat_mod.FORCE_RUST_BEAT = old_rust
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Phase 14 beat_track benchmark")
+    parser.add_argument(
+        "--backend",
+        choices=["auto", "numpy", "rust", "compare"],
+        default="auto",
+        help="Backend mode: auto, force numpy, force rust, or compare numpy/rust.",
+    )
+    parser.add_argument(
+        "--json-out",
+        type=str,
+        default=None,
+        help="Optional path to write benchmark output as JSON.",
+    )
+    return parser.parse_args()
 
 
 def _timeit(fn, repeats=5):
@@ -46,7 +86,7 @@ def _noisy_music_like(seconds: int, seed: int) -> np.ndarray:
     return y.astype(np.float32)
 
 
-def _bench_case(name: str, y: np.ndarray):
+def _bench_case(name: str, y: np.ndarray) -> dict:
     # Warm up numba-backed beat kernels before timing steady-state.
     librosa.beat.beat_track(y=y, sr=SR, hop_length=512)
     (_, beats), avg_ms, min_ms = _timeit(lambda: librosa.beat.beat_track(y=y, sr=SR, hop_length=512))
@@ -71,7 +111,7 @@ def _bench_case(name: str, y: np.ndarray):
     librosa.beat.__dp_backtrack(backlink, tail, beats_dense)
     librosa.beat.__trim_beats(localscore, beats_dense, True)
 
-    stage_acc = {
+    stage_acc: Dict[str, List[float]] = {
         "onset": [],
         "tempo": [],
         "local": [],
@@ -120,6 +160,15 @@ def _bench_case(name: str, y: np.ndarray):
         pct = 100.0 * stage_avg[key] / total_stage if total_stage > 0 else 0.0
         print(f"    {key:<6} avg={stage_avg[key]:8.3f} ms  share={pct:6.1f}%")
 
+    return {
+        "name": name,
+        "samples": int(y.shape[0]),
+        "beats": int(len(beats)),
+        "avg_ms": avg_ms,
+        "min_ms": min_ms,
+        "stage_avg_ms": stage_avg,
+    }
+
 
 def _post_stage(onset_env, localscore, backlink, cumscore):
     tail = librosa.beat.__last_beat(cumscore)
@@ -130,13 +179,52 @@ def _post_stage(onset_env, localscore, backlink, cumscore):
 
 
 def main() -> None:
+    args = _parse_args()
+
     print("=" * 72)
-    print("Phase 12 beat_track benchmark")
+    print("Phase 14 beat_track benchmark")
     print("=" * 72)
 
-    _bench_case("click_120bpm_30s", _click_track(seconds=30, bpm=120.0))
-    _bench_case("noisy_30s", _noisy_music_like(seconds=30, seed=8801))
-    _bench_case("noisy_120s", _noisy_music_like(seconds=120, seed=8802))
+    cases = [
+        ("click_120bpm_30s", _click_track(seconds=30, bpm=120.0)),
+        ("noisy_30s", _noisy_music_like(seconds=30, seed=8801)),
+        ("noisy_120s", _noisy_music_like(seconds=120, seed=8802)),
+    ]
+
+    results = []
+    if args.backend == "compare":
+        for mode in ("numpy", "rust"):
+            print(f"-- backend: {mode} --")
+            with _beat_backend(mode):
+                for name, y in cases:
+                    out = _bench_case(name, y)
+                    out["backend"] = mode
+                    results.append(out)
+    else:
+        mode = args.backend
+        if mode in ("numpy", "rust"):
+            print(f"-- backend: {mode} --")
+        with _beat_backend(mode):
+            for name, y in cases:
+                out = _bench_case(name, y)
+                out["backend"] = mode
+                results.append(out)
+
+    if args.json_out:
+        payload = {
+            "meta": {
+                "benchmark": "phase14_beat_track",
+                "backend": args.backend,
+                "platform": platform.platform(),
+                "python": platform.python_version(),
+                "numpy": np.__version__,
+                "librosa": getattr(librosa, "__version__", "unknown"),
+            },
+            "cases": results,
+        }
+        with open(args.json_out, "w", encoding="utf-8") as fdesc:
+            json.dump(payload, fdesc, indent=2)
+        print(f"wrote json report: {args.json_out}")
 
 
 if __name__ == "__main__":

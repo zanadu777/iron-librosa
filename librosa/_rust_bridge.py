@@ -40,6 +40,8 @@ __all__ = [
     "FORCE_RUST_MEL",
     "FORCE_NUMPY_CQT_VQT",
     "FORCE_RUST_CQT_VQT",
+    "FORCE_NUMPY_BEAT",
+    "FORCE_RUST_BEAT",
 ]
 
 # Mel backend policy override for librosa.feature.melspectrogram 2D path.
@@ -60,6 +62,16 @@ if _cqt_vqt_backend not in {"auto", "numpy", "rust"}:
 
 FORCE_NUMPY_CQT_VQT: bool = _cqt_vqt_backend == "numpy"
 FORCE_RUST_CQT_VQT: bool = _cqt_vqt_backend == "rust"
+
+# Phase 14 beat backend policy. Keep default on NumPy/Numba path until
+# benchmark and parity gates support promotion.
+# Accepted values: "auto" (default), "numpy", "rust".
+_beat_backend = os.getenv("IRON_LIBROSA_BEAT_BACKEND", "auto").strip().lower()
+if _beat_backend not in {"auto", "numpy", "rust"}:
+    _beat_backend = "auto"
+
+FORCE_NUMPY_BEAT: bool = _beat_backend == "numpy"
+FORCE_RUST_BEAT: bool = _beat_backend == "rust"
 
 try:
     from librosa import _rust as _rust_ext  # type: ignore[attr-defined]

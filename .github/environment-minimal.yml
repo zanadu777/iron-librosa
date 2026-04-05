@@ -30,4 +30,3 @@ dependencies:
 
   - pip:
     - numpy==1.22.3
-    - samplerate

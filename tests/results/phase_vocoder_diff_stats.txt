@@ -1,5 +1,0 @@
-max_abs=7.94392395e+00
-mean_abs=5.19054770e-01
-rtol1e-5_atol1e-6=False
-rtol1e-4_atol1e-5=False
-rtol5e-4_atol5e-5=False
