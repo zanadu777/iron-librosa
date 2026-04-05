@@ -415,4 +415,10 @@ smv_prefer_remote_refs = True
 
 
 linkcheck_allow_unauthorized = True
-linkcheck_ignore = ['https://www.ee.columbia.edu/~dpwe/resources/.*']
+linkcheck_ignore = [
+    'https://www.ee.columbia.edu/~dpwe/resources/.*',
+    # Zenodo frequently returns 403s to automated linkcheck requests in CI.
+    'https://zenodo.org/badge/.*',
+    'https://zenodo.org/badge/latestdoi/.*',
+    'https://zenodo.org/record/.*',
+]
