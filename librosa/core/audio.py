@@ -240,8 +240,9 @@ def __audioread_load(path, offset, duration, dtype: DTypeLike):
     buf = []
 
     if isinstance(path, tuple(audioread.available_backends())):
-        # If we have an audioread object already, don't bother opening
-        reader = cast(audioread.AudioFile, path)
+        # If we have an audioread object already, don't bother opening.
+        # audioread>=3 may not expose `audioread.AudioFile` at module scope.
+        reader = cast(Any, path)
     else:
         # If the input was not an audioread object, try to open it
         reader = audioread.audio_open(path)
