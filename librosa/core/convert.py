@@ -1209,8 +1209,13 @@ def hz_to_mel(
     frequencies = np.asanyarray(frequencies)
 
     # --- iron-librosa: Rust acceleration ---
-    if RUST_AVAILABLE and hasattr(_rust_ext, "hz_to_mel") and frequencies.ndim:
-        return _rust_ext.hz_to_mel(np.asarray(frequencies, dtype=np.float64), htk=htk)
+    if (
+        RUST_AVAILABLE
+        and hasattr(_rust_ext, "hz_to_mel")
+        and frequencies.ndim == 1
+    ):
+        freq_rust = np.ascontiguousarray(frequencies, dtype=np.float64)
+        return _rust_ext.hz_to_mel(freq_rust, htk=htk)
     # --- end Rust acceleration ---
 
     if htk:
@@ -1289,8 +1294,9 @@ def mel_to_hz(
     mels = np.asanyarray(mels)
 
     # --- iron-librosa: Rust acceleration ---
-    if RUST_AVAILABLE and hasattr(_rust_ext, "mel_to_hz") and mels.ndim:
-        return _rust_ext.mel_to_hz(np.asarray(mels, dtype=np.float64), htk=htk)
+    if RUST_AVAILABLE and hasattr(_rust_ext, "mel_to_hz") and mels.ndim == 1:
+        mels_rust = np.ascontiguousarray(mels, dtype=np.float64)
+        return _rust_ext.mel_to_hz(mels_rust, htk=htk)
     # --- end Rust acceleration ---
 
     if htk:
@@ -2469,7 +2475,7 @@ def midi_to_svara_h(
     octave : bool
         If `True`, decorate svara in neighboring octaves with over- or under-dots.
 
-        If `False`, ignore octave height information.
+        If `False`, return long-form names ('Sa', 're', 'Re', 'ga', 'Ga', ...)
 
     unicode : bool
         If `True`, use unicode symbols to decorate octave information.
@@ -2662,102 +2668,6 @@ def hz_to_svara_h(
 
 
 @overload
-def note_to_svara_h(
-    notes: str, *, Sa: str, abbr: bool = ..., octave: bool = ..., unicode: bool = ...
-) -> str:
-    ...
-
-
-@overload
-def note_to_svara_h(
-    notes: _IterableLike[str],
-    *,
-    Sa: str,
-    abbr: bool = ...,
-    octave: bool = ...,
-    unicode: bool = ...,
-) -> np.ndarray:
-    ...
-
-
-@overload
-def note_to_svara_h(
-    notes: Union[str, _IterableLike[str]],
-    *,
-    Sa: str,
-    abbr: bool = ...,
-    octave: bool = ...,
-    unicode: bool = ...,
-) -> Union[str, np.ndarray]:
-    ...
-
-
-def note_to_svara_h(
-    notes: Union[str, _IterableLike[str]],
-    *,
-    Sa: str,
-    abbr: bool = True,
-    octave: bool = True,
-    unicode: bool = True,
-) -> Union[str, np.ndarray]:
-    """Convert western notes to Hindustani svara
-
-    Note that this conversion assumes 12-tone equal temperament.
-
-    Parameters
-    ----------
-    notes : str or iterable of str
-        Notes to convert (e.g., `'C#'` or `['C4', 'Db4', 'D4']`
-
-    Sa : str
-        Note corresponding to Sa (e.g., `'C'` or `'C5'`).
-
-        If no octave information is provided, it will default to octave 0
-        (``C0`` ~= 16 Hz)
-
-    abbr : bool
-        If `True` (default) return abbreviated names ('S', 'r', 'R', 'g', 'G', ...)
-
-        If `False`, return long-form names ('Sa', 're', 'Re', 'ga', 'Ga', ...)
-
-    octave : bool
-        If `True`, decorate svara in neighboring octaves with over- or under-dots.
-
-        If `False`, ignore octave height information.
-
-    unicode : bool
-        If `True`, use unicode symbols to decorate octave information.
-
-        If `False`, use low-order ASCII (' and ,) for octave decorations.
-
-        This only takes effect if `octave=True`.
-
-    Returns
-    -------
-    svara : str or np.ndarray of str
-        The svara corresponding to the given notes
-
-    See Also
-    --------
-    midi_to_svara_h
-    hz_to_svara_h
-    note_to_svara_c
-    note_to_midi
-    note_to_hz
-
-    Examples
-    --------
-    >>> librosa.note_to_svara_h(['C4', 'G4', 'C5', 'G5'], Sa='C5')
-    ['Ṣ', 'P̣', 'S', 'P']
-    """
-    midis = note_to_midi(notes, round_midi=False)
-
-    return midi_to_svara_h(
-        midis, Sa=note_to_midi(Sa), abbr=abbr, octave=octave, unicode=unicode
-    )
-
-
-@overload
 def midi_to_svara_c(
     midi: _FloatLike_co,
     *,
@@ -2931,8 +2841,8 @@ def hz_to_svara_c(
     Sa : positive number
         Frequency (in Hz) of the reference Sa.
 
-    mela : int [1, 72] or string
-        The melakarta raga to use.
+    mela : str or int [1, 72]
+        Melakarta raga name or index
 
     abbr : bool
         If `True` (default) return abbreviated names ('S', 'R1', 'R2', 'G1', 'G2', ...)
@@ -3047,7 +2957,7 @@ def note_to_svara_c(
         (``C0`` ~= 16 Hz)
 
     mela : str or int [1, 72]
-        Melakarta raga name or index
+        Melakarta raga to use.
 
     abbr : bool
         If `True` (default) return abbreviated names ('S', 'R1', 'R2', 'G1', 'G2', ...)

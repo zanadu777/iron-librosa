@@ -36,6 +36,7 @@ import os
 __all__ = [
     "_rust_ext",
     "RUST_AVAILABLE",
+    "RUST_EXTENSION_AVAILABLE",
     "FORCE_NUMPY_MEL",
     "FORCE_RUST_MEL",
     "FORCE_NUMPY_CQT_VQT",
@@ -78,4 +79,10 @@ try:
 except ImportError:
     _rust_ext = None
 
-RUST_AVAILABLE: bool = _rust_ext is not None
+# Keep extension availability separate from dispatch policy.
+RUST_EXTENSION_AVAILABLE: bool = _rust_ext is not None
+
+# Global dispatch gate: default to safe NumPy/SciPy parity in CI and production.
+# Set IRON_LIBROSA_RUST_DISPATCH=1 to enable Rust accelerated dispatch paths.
+_rust_dispatch = os.getenv("IRON_LIBROSA_RUST_DISPATCH", "0").strip().lower()
+RUST_AVAILABLE: bool = RUST_EXTENSION_AVAILABLE and _rust_dispatch in {"1", "true", "yes", "on"}
