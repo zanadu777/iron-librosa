@@ -150,3 +150,11 @@ jobs:
             name: codecov-umbrella
             fail_ci_if_error: false
             verbose: true
+
+        - name: Type check package
+          shell: bash -l {0}
+          run: python -m mypy --pretty librosa
+
+        - name: Type check tests
+          shell: bash -l {0}
+          run: python -m mypy --pretty --pythonpath=Benchmarks/scripts tests
