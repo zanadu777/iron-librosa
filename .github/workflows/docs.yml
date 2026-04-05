@@ -75,7 +75,9 @@ jobs:
             ln -srf build/html/$(./scripts/get_latest_release.sh) build/html/latest  # auto-link the latest tag
 
         - name: Push to web
-          if: github.repository == 'librosa/librosa' && secrets.DOCS_DEPLOY_KEY != ''
+          env:
+            DOCS_DEPLOY_KEY: ${{ secrets.DOCS_DEPLOY_KEY }}
+          if: github.repository == 'librosa/librosa' && env.DOCS_DEPLOY_KEY != ''
           uses: tagus/git-deploy@v0.4.1
           with:
             changes: build/html

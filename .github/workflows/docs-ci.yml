@@ -80,7 +80,8 @@ jobs:
           id: linkcheck
           shell: bash -l {0}
           working-directory: docs
-          run: make linkcheck
+          run: |
+            make linkcheck || (echo "Linkcheck failed, retrying once..." && sleep 5 && make linkcheck)
 
         - name: Check for broken links
           shell: bash -l {0}
