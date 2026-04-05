@@ -1,5 +1,9 @@
 name: lint_python
 on: [pull_request, push]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   lint_python:
     name: "Lint and code analysis"
@@ -29,7 +33,7 @@ jobs:
         auto-update-conda: false
         python-version: ${{ matrix.python-version }}
         add-pip-as-python-dependency: true
-        auto-activate-base: false
+        auto-activate: false
         activate-environment: lint
         # mamba-version: "*"
         channel-priority: ${{ matrix.channel-priority }}

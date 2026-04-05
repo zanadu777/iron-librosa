@@ -14,6 +14,9 @@ concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: True
 
+env:
+    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
     doc:
         name: "Documentation build"
@@ -47,7 +50,7 @@ jobs:
             auto-update-conda: false
             python-version: ${{ matrix.python-version }}
             add-pip-as-python-dependency: true
-            auto-activate-base: false
+            auto-activate: false
             activate-environment: docs
             channel-priority: ${{ matrix.channel-priority }}
             environment-file: ${{ matrix.envfile }}
