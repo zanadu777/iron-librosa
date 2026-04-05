@@ -14,6 +14,7 @@ Start Phase 14 by defining and validating the first Rust acceleration seam for b
 
 Reference:
 - `Development_docs/PHASE13_CQT_VQT_COMPLETION_REPORT.md`
+- `Development_docs/PHASE14_BEAT_TRACK_SEAM_CONTRACT.md`
 
 ## Scope (Phase 14)
 
@@ -61,10 +62,10 @@ python -m pytest -q -o addopts="" tests/test_beat.py
 python -m pytest -q -o addopts="" tests/test_tempo.py
 ```
 
-If benchmark script is present:
+Benchmark baseline command:
 
 ```powershell
-python Benchmarks/scripts/benchmark_phase12_beat_track.py
+python Benchmarks/scripts/benchmark_phase14_beat_track.py --backend compare --json-out Benchmarks/results/phase14_beat_track_baseline.json
 ```
 
 ## Promotion Criteria
