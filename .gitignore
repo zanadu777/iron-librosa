@@ -70,3 +70,7 @@ coverage.xml
 target/
 librosa/_rust*.pyd
 librosa/_rust*.pdb
+
+Benchmarks/results/
+!Benchmarks/results/phase16_host_baseline.json
+!Benchmarks/results/phase16_host_rust.json
