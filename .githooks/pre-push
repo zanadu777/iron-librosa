@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo "[pre-push] Running full test gate..."
+if command -v python >/dev/null 2>&1; then
+  python -u run_full_tests.py
+elif command -v py >/dev/null 2>&1; then
+  py -3 -u run_full_tests.py
+else
+  echo "[pre-push] ERROR: Python was not found in PATH."
+  exit 1
+fi
+

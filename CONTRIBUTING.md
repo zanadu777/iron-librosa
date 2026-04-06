@@ -55,6 +55,21 @@ GitHub:
 
           $ git commit -m "<COMMIT-MESSAGE>"
 
+   Enable the repository-managed pre-push hook once per clone:
+
+          $ git config core.hooksPath .githooks
+
+   The hook runs `python -u run_full_tests.py` and blocks push if the full gate fails.
+   This gate excludes `tests/test_display.py` image-baseline checks, which are
+   sensitive to local rendering stacks.
+   You can run the same gate manually before pushing:
+
+          $ python -u run_full_tests.py
+
+   Run display image-baseline checks separately when making display/plotting changes:
+
+          $ python -m pytest -q tests/test_display.py
+
    to record your changes in Git, then push them to GitHub with:
 
           $ git push --set-upstream origin <NAME-NEW-BRANCH>

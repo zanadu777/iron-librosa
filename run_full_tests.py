@@ -1,48 +1,50 @@
 #!/usr/bin/env python
-"""
-Run pytest programmatically to test the hotfix validation.
-"""
+"""Run the full test gate used by pre-push validation."""
 import subprocess
 import sys
+import os
+
+
+def run_step(label: str, command: list[str]) -> int:
+    """Run a command, print captured output, and return the exit code."""
+    print(label)
+    env = dict(os.environ)
+    env.setdefault("PYTHONUTF8", "1")
+    result = subprocess.run(command, capture_output=True, text=True, env=env)
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print("STDERR:")
+        print(result.stderr)
+    print()
+    return result.returncode
 
 print("=" * 70)
 print("RUNNING FULL TEST SUITE VALIDATION")
 print("=" * 70)
 print()
 
-# Test 1: Run test_core.py
-print("Running test_core.py...")
-result = subprocess.run(
-    [sys.executable, "-m", "pytest", "tests/test_core.py", "-q", "-o", "addopts="],
-    capture_output=True,
-    text=True
-)
-print(result.stdout)
-if result.stderr:
-    print("STDERR:", result.stderr)
-print()
+overall_status = 0
 
-# Test 2: Run test_multichannel.py with focus on mel operations
-print("Running test_multichannel.py with melspectrogram focus...")
-result = subprocess.run(
-    [sys.executable, "-m", "pytest", "tests/test_multichannel.py", "-k", "mel", "-q", "-o", "addopts="],
-    capture_output=True,
-    text=True
+# Step 1: Full project test suite
+overall_status |= run_step(
+    "Running full pytest suite...",
+    [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "--ignore=tests/test_display.py",
+    ],
 )
-lines = result.stdout.split('\n')
-print('\n'.join(lines[-20:]))  # Last 20 lines
-print()
 
-# Test 3: Run validation script
-print("Running hotfix validation script...")
-result = subprocess.run(
-    [sys.executable, "test_hotfix_validation.py"],
-    capture_output=True,
-    text=True
+# Step 2: Additional hotfix validation coverage
+overall_status |= run_step(
+    "Running hotfix validation script...",
+    [sys.executable, "tests/test_hotfix_validation.py"],
 )
-print(result.stdout)
 
 print("=" * 70)
 print("TEST EXECUTION COMPLETE")
 print("=" * 70)
-
+sys.exit(overall_status)
