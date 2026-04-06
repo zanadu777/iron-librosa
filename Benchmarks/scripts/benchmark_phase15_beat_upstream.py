@@ -30,6 +30,12 @@ SR, HOP = 22050, 512
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Phase 15 beat upstream benchmark")
     parser.add_argument(
+        "--json-out",
+        type=str,
+        default=None,
+        help="Output JSON path. Defaults to Benchmarks/results/phase15_bench_<backend>.json.",
+    )
+    parser.add_argument(
         "--compare-with",
         type=str,
         default="Benchmarks/results/phase15_bench_numpy_baseline.json",
@@ -116,8 +122,8 @@ payload = {
     'rows': rows,
 }
 assert_benchmark_payload_schema(payload, "phase15_beat_upstream")
-fname = f'Benchmarks/results/phase15_bench_{backend}.json'
-with open(fname, 'w') as f:
+fname = args.json_out or f'Benchmarks/results/phase15_bench_{backend}.json'
+with open(fname, 'w', encoding='utf-8') as f:
     json.dump(payload, f, indent=2)
 print(f"saved {fname}")
 
