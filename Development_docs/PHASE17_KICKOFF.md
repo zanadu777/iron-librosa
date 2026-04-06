@@ -74,3 +74,20 @@ python Benchmarks/scripts/validate_benchmark_payloads.py --paths Benchmarks/resu
 - `noisy_30s`: 29.1 ms -> 12.2 ms (`2.39x`)
 - `noisy_120s`: 157.3 ms -> 53.8 ms (`2.93x`)
 
+## First Phase 17 implementation slice (started)
+
+- Hardened `librosa.beat.beat_track` to treat non-finite `onset_envelope`
+  values as empty detections, consistent with `librosa.onset.onset_detect`.
+- Preserved existing empty-onset semantics and user-provided `bpm`
+  passthrough behavior.
+- Added regression coverage in `tests/test_beat.py` for `NaN`/`Inf`
+  onset envelopes across sparse/dense modes and forced numpy/rust dispatch.
+
+### Validation
+
+```powershell
+python -m pytest -q -o addopts="" tests/test_beat.py -k "nonfinite_onsets or test_beat_no_onsets" tests/test_phase14_beat_parity.py tests/test_phase15_beat_upstream.py
+```
+
+Result: `15 passed`.
+

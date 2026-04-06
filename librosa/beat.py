@@ -233,13 +233,16 @@ def beat_track(
             y=y, sr=sr, hop_length=hop_length, aggregate=np.median
         )
 
+    # Normalize user-provided buffers to ndarray for consistent shape checks.
+    onset_envelope = np.asarray(onset_envelope)
+
     if sparse and onset_envelope.ndim != 1:
         raise ParameterError(f"sparse=True (default) does not support "
                 f"{onset_envelope.ndim}-dimensional inputs. "
                 f"Either set sparse=False or convert the signal to mono.")
 
-    # Do we have any onsets to grab?
-    if not onset_envelope.any():
+    # Treat non-finite onset buffers as empty detections (mirrors onset_detect behavior).
+    if (not onset_envelope.any()) or (not np.all(np.isfinite(onset_envelope))):
         if bpm is None:
             if sparse:
                 return (0.0, np.array([], dtype=int))

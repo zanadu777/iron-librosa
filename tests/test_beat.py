@@ -109,6 +109,62 @@ def test_beat_no_onsets():
     assert not np.any(beats)
 
 
+@pytest.mark.parametrize("bad_value", [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize("sparse", [True, False])
+@pytest.mark.parametrize("bpm", [None, 123.0])
+def test_beat_nonfinite_onsets_returns_empty(bad_value, sparse, bpm):
+    onsets = np.zeros(128, dtype=float)
+    onsets[10] = bad_value
+
+    tempo, beats = librosa.beat.beat_track(
+        onset_envelope=onsets,
+        sr=22050,
+        hop_length=512,
+        sparse=sparse,
+        bpm=bpm,
+    )
+
+    if bpm is None:
+        assert np.allclose(np.asarray(tempo), 0.0)
+    else:
+        assert np.allclose(np.asarray(tempo), np.asarray(bpm))
+
+    if sparse:
+        assert beats.dtype == int
+        assert beats.size == 0
+    else:
+        assert beats.dtype == bool
+        assert beats.shape == onsets.shape
+        assert not np.any(beats)
+
+
+@pytest.mark.parametrize("force_rust", [False, True])
+def test_beat_nonfinite_onsets_dispatch_invariant(monkeypatch, force_rust):
+    onsets = np.zeros(96, dtype=float)
+    onsets[5] = np.nan
+
+    old_numpy = beat_mod.FORCE_NUMPY_BEAT
+    old_rust = beat_mod.FORCE_RUST_BEAT
+    old_available = beat_mod.RUST_AVAILABLE
+    try:
+        beat_mod.FORCE_NUMPY_BEAT = not force_rust
+        beat_mod.FORCE_RUST_BEAT = force_rust
+        beat_mod.RUST_AVAILABLE = True
+        tempo, beats = librosa.beat.beat_track(
+            onset_envelope=onsets,
+            sr=22050,
+            hop_length=512,
+            sparse=True,
+        )
+    finally:
+        beat_mod.FORCE_NUMPY_BEAT = old_numpy
+        beat_mod.FORCE_RUST_BEAT = old_rust
+        beat_mod.RUST_AVAILABLE = old_available
+
+    assert np.allclose(np.asarray(tempo), 0.0)
+    assert beats.size == 0
+
+
 @pytest.mark.parametrize("start_bpm", [40, 60, 117, 235])
 @pytest.mark.parametrize("aggregate", [None, np.mean])
 @pytest.mark.parametrize("onsets", [np.zeros(30 * 22050 // 512)])
