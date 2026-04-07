@@ -646,7 +646,12 @@ def fix_frames(
     # TODO: this whole function could be made more efficient
 
     if pad and (x_min is not None or x_max is not None):
-        frames = np.clip(frames, x_min, x_max)
+        if x_min is not None and x_max is not None:
+            frames = np.clip(frames, x_min, x_max)
+        elif x_min is not None:
+            frames = np.clip(frames, x_min, None)
+        else:
+            frames = np.clip(frames, None, x_max)
 
     if pad:
         pad_data = []
@@ -982,10 +987,16 @@ def normalize(
         if fill is True:
             raise ParameterError("Cannot normalize with norm=0 and fill=True")
 
-        length = np.sum(mag > 0, axis=axis, keepdims=True, dtype=mag.dtype)
+        if axis is None:
+            length = np.sum(mag > 0, keepdims=True, dtype=mag.dtype)
+        else:
+            length = np.sum(mag > 0, axis=axis, keepdims=True, dtype=mag.dtype)
 
     elif np.issubdtype(type(norm), np.number) and norm > 0:
-        length = np.sum(mag**norm, axis=axis, keepdims=True) ** (1.0 / norm)
+        if axis is None:
+            length = np.sum(mag**norm, keepdims=True) ** (1.0 / norm)
+        else:
+            length = np.sum(mag**norm, axis=axis, keepdims=True) ** (1.0 / norm)
 
         if axis is None:
             fill_norm = mag.size ** (-1.0 / norm)
