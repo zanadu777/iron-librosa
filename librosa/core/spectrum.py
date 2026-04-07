@@ -54,7 +54,7 @@ def stft(*args, **kwargs):
     return _spectrum_stft.stft(*args, **kwargs)
 
 
-@wraps(_spectrum_stft.istft)
+@wraps(_spectrum_stft.istft)  # type: ignore[has-type]
 def istft(*args, **kwargs):
     return _spectrum_stft.istft(*args, **kwargs)
 
@@ -80,14 +80,14 @@ def phase_vocoder(*args, **kwargs):
     return _spectrum_tf.phase_vocoder(*args, **kwargs)
 
 
-iirt = _spectrum_tf.iirt
+iirt = _spectrum_tf.iirt  # type: ignore[has-type]
 
 power_to_db = _spectrum_db.power_to_db
 db_to_power = _spectrum_db.db_to_power
 amplitude_to_db = _spectrum_db.amplitude_to_db
 db_to_amplitude = _spectrum_db.db_to_amplitude
-perceptual_weighting = _spectrum_db.perceptual_weighting
-fmt = _spectrum_db.fmt
+perceptual_weighting = _spectrum_db.perceptual_weighting  # type: ignore[has-type]
+fmt = _spectrum_db.fmt  # type: ignore[has-type]
 
 pcen = _spectrum_pcen.pcen
 

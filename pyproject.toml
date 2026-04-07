@@ -43,6 +43,7 @@ dependencies = [
 tests = [
     "matplotlib >= 3.5.0",
     "packaging >= 20.0",
+    "mypy",
     "pytest-mpl",
     "pytest-cov",
     "pytest",
