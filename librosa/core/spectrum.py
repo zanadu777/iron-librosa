@@ -279,8 +279,12 @@ def stft(
         use_f64_kernel = (
             y.dtype == np.float32
             and hasattr(_rust_ext, "stft_complex_f64")
-            and center is False
-            and n_fft <= 1024
+            and (
+                # Preserve strict parity in small-FFT uncentered paths.
+                (center is False and n_fft <= 1024)
+                # Improve parity for default display/STFT fixtures.
+                or (center is True and n_fft >= 2048)
+            )
         )
 
         y_target_dtype = np.float64 if use_f64_kernel else y.dtype

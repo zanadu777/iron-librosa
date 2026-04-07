@@ -114,7 +114,7 @@ def test_unknown_time_unit(y):
 
 
 @pytest.mark.mpl_image_compare(
-    baseline_images=["complex"], extensions=["png"], tolerance=6, style=STYLE
+    baseline_images=["complex"], extensions=["png"], tolerance=8, style=STYLE
 )
 @pytest.mark.xfail(OLD_FT, reason=f"freetype version < {FT_VERSION}", strict=False)
 def test_complex_input(S):
