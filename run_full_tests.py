@@ -4,13 +4,18 @@ import subprocess
 import sys
 import os
 
+# Always resolve paths relative to this script, not the caller's CWD.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 def run_step(label: str, command: list[str]) -> int:
     """Run a command, print captured output, and return the exit code."""
     print(label)
     env = dict(os.environ)
     env.setdefault("PYTHONUTF8", "1")
-    result = subprocess.run(command, capture_output=True, text=True, env=env)
+    result = subprocess.run(
+        command, capture_output=True, text=True, env=env, cwd=SCRIPT_DIR
+    )
     if result.stdout:
         print(result.stdout)
     if result.stderr:
