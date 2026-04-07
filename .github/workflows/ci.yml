@@ -157,7 +157,7 @@ jobs:
 
         - name: Type check tests
           shell: bash -l {0}
-          run: python -m mypy --pretty --pythonpath=Benchmarks/scripts tests
+          run: MYPYPATH=Benchmarks/scripts python -m mypy --pretty tests
 
         - name: Validate Phase 16 benchmark payloads
           shell: bash -l {0}
