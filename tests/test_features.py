@@ -1153,6 +1153,8 @@ def test_spectrogram_rust_dispatch_center_false(monkeypatch):
         types.SimpleNamespace(stft_power=_spy_stft_power),
     )
     monkeypatch.setattr(core_spectrum_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_NUMPY_STFT", False)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_RUST_STFT", True)
 
     spectral_mod._spectrogram(
         y=y,
@@ -1457,6 +1459,8 @@ def test_spectrogram_dispatch_prefers_f64_kernel(monkeypatch):
         types.SimpleNamespace(stft_power=_spy_stft_power, stft_power_f64=_spy_stft_power_f64),
     )
     monkeypatch.setattr(core_spectrum_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_NUMPY_STFT", False)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_RUST_STFT", True)
 
     S, _ = spectral_mod._spectrogram(
         y=y,
@@ -1496,6 +1500,8 @@ def test_stft_dispatch_prefers_complex_f32_kernel(monkeypatch):
         types.SimpleNamespace(stft_complex=_spy_stft_complex),
     )
     monkeypatch.setattr(core_spectrum_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_NUMPY_STFT", False)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_RUST_STFT", True)
 
     D = librosa.stft(y, n_fft=1024, hop_length=256, window="hann", center=True)
 
@@ -1528,6 +1534,8 @@ def test_stft_dispatch_prefers_complex_f64_kernel(monkeypatch):
         types.SimpleNamespace(stft_complex=_spy_stft_complex, stft_complex_f64=_spy_stft_complex_f64),
     )
     monkeypatch.setattr(core_spectrum_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_NUMPY_STFT", False)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_RUST_STFT", True)
 
     D = librosa.stft(y, n_fft=1024, hop_length=256, window="hann", center=True)
 
@@ -1561,6 +1569,8 @@ def test_stft_multichannel_dispatch_f32(monkeypatch):
         types.SimpleNamespace(stft_complex=_spy_stft_complex, stft_complex_batch=_spy_stft_complex_batch),
     )
     monkeypatch.setattr(core_spectrum_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_NUMPY_STFT", False)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_RUST_STFT", True)
 
     D = librosa.stft(y, n_fft=1024, hop_length=256, window="hann", center=True)
 
@@ -1603,6 +1613,8 @@ def test_stft_multichannel_dispatch_f64(monkeypatch):
         ),
     )
     monkeypatch.setattr(core_spectrum_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_NUMPY_STFT", False)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_RUST_STFT", True)
 
     D = librosa.stft(y, n_fft=1024, hop_length=256, window="hann", center=True)
 
@@ -1638,6 +1650,8 @@ def test_stft_multichannel_dispatch_uses_batch_for_many_channels(monkeypatch):
         types.SimpleNamespace(stft_complex=_spy_stft_complex, stft_complex_batch=_spy_stft_complex_batch),
     )
     monkeypatch.setattr(core_spectrum_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_NUMPY_STFT", False)
+    monkeypatch.setattr(core_spectrum_mod, "FORCE_RUST_STFT", True)
 
     D = librosa.stft(y, n_fft=1024, hop_length=256, window="hann", center=True)
 

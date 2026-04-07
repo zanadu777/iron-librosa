@@ -43,6 +43,8 @@ __all__ = [
     "FORCE_RUST_CQT_VQT",
     "FORCE_NUMPY_BEAT",
     "FORCE_RUST_BEAT",
+    "FORCE_NUMPY_STFT",
+    "FORCE_RUST_STFT",
 ]
 
 # Mel backend policy override for librosa.feature.melspectrogram 2D path.
@@ -73,6 +75,18 @@ if _beat_backend not in {"auto", "numpy", "rust"}:
 
 FORCE_NUMPY_BEAT: bool = _beat_backend == "numpy"
 FORCE_RUST_BEAT: bool = _beat_backend == "rust"
+
+# STFT backend policy. Keep default on NumPy path until the Rust STFT
+# (rustfft) passes MATLAB-parity tests within float32 tolerance.
+# rustfft and numpy/scipy FFT differ by ~1e-5 in float32 round-off, which
+# breaks test_stft / test___reassign_frequencies_regress when Rust is active.
+# Accepted values: "auto" (default, keep NumPy path), "numpy", "rust".
+_stft_backend = os.getenv("IRON_LIBROSA_STFT_BACKEND", "auto").strip().lower()
+if _stft_backend not in {"auto", "numpy", "rust"}:
+    _stft_backend = "auto"
+
+FORCE_NUMPY_STFT: bool = _stft_backend in {"numpy", "auto"}
+FORCE_RUST_STFT: bool = _stft_backend == "rust"
 
 try:
     from librosa import _rust as _rust_ext  # type: ignore[attr-defined]

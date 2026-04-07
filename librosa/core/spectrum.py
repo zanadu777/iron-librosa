@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """Utilities for spectral processing"""
 from __future__ import annotations
@@ -21,7 +21,7 @@ from .. import util
 from ..util.exceptions import ParameterError
 from ..filters import get_window, semitone_filterbank
 from ..filters import window_sumsquare
-from .._rust_bridge import _rust_ext, RUST_AVAILABLE
+from .._rust_bridge import _rust_ext, RUST_AVAILABLE, FORCE_NUMPY_STFT, FORCE_RUST_STFT
 from numpy.typing import DTypeLike
 from typing import Any, Callable, Optional, Tuple, List, Union, overload
 from typing_extensions import Literal
@@ -51,6 +51,10 @@ __all__ = [
     "pcen",
     "griffinlim",
 ]
+
+# Cache periodic Hann windows used by Rust STFT fast-path to avoid
+# per-call window regeneration overhead in the extension module.
+_RUST_HANN_WINDOW_CACHE: dict[tuple[int, np.dtype], np.ndarray] = {}
 
 
 @cache(level=20)
@@ -240,15 +244,17 @@ def stft(
     # Check audio is valid
     util.valid_audio(y)
 
-    fft_window = get_window(window, win_length, fftbins=True)
-
-    # Pad the window out to n_fft size
-    fft_window = util.pad_center(fft_window, size=n_fft)
+    fft_window: Optional[np.ndarray] = None
 
     # Rust fast-path for 1D complex STFT.
     # Keep this conservative to preserve exact behavior for advanced cases.
+    # Requires explicit opt-in via IRON_LIBROSA_STFT_BACKEND=rust because
+    # rustfft and numpy/scipy FFT have ~1e-5 float32 round-off differences
+    # that break the MATLAB-parity tests (test_stft / test___reassign_*).
     _rust_stft_ok = (
-        RUST_AVAILABLE
+        FORCE_RUST_STFT
+        and not FORCE_NUMPY_STFT
+        and RUST_AVAILABLE
         and y.ndim >= 1
         and y.dtype in (np.float32, np.float64)
         and win_length == n_fft
@@ -256,19 +262,51 @@ def stft(
         and out is None
         and (center is False or pad_mode == "constant")
         and (
-            (y.dtype == np.float32 and hasattr(_rust_ext, "stft_complex"))
+            (
+                y.dtype == np.float32
+                and (
+                    hasattr(_rust_ext, "stft_complex_f64")
+                    or hasattr(_rust_ext, "stft_complex")
+                )
+            )
             or (y.dtype == np.float64 and hasattr(_rust_ext, "stft_complex_f64"))
         )
     )
 
     if _rust_stft_ok:
-        y_c = np.ascontiguousarray(y)
-        win_dtype = np.float32 if y.dtype == np.float32 else np.float64
-        win_c = np.ascontiguousarray(fft_window, dtype=win_dtype)
-
-        rust_stft_complex = (
-            _rust_ext.stft_complex if y.dtype == np.float32 else _rust_ext.stft_complex_f64
+        # Use float64 kernel only for strict center=False small-FFT parity cases;
+        # otherwise prefer float32 kernel for throughput.
+        use_f64_kernel = (
+            y.dtype == np.float32
+            and hasattr(_rust_ext, "stft_complex_f64")
+            and center is False
+            and n_fft <= 1024
         )
+
+        y_target_dtype = np.float64 if use_f64_kernel else y.dtype
+        y_c = np.ascontiguousarray(y, dtype=y_target_dtype)
+        win_dtype = np.float64 if use_f64_kernel or y.dtype == np.float64 else np.float32
+
+        # Default full-frame periodic Hann: use a cached numpy window to avoid
+        # repeated Hann construction cost in the Rust extension.
+        if isinstance(window, str) and window == "hann" and win_length == n_fft:
+            cache_key = (int(n_fft), np.dtype(win_dtype))
+            win_cached = _RUST_HANN_WINDOW_CACHE.get(cache_key)
+            if win_cached is None:
+                win_cached = np.ascontiguousarray(
+                    get_window("hann", n_fft, fftbins=True), dtype=win_dtype
+                )
+                _RUST_HANN_WINDOW_CACHE[cache_key] = win_cached
+            win_c = win_cached
+        else:
+            fft_window = get_window(window, win_length, fftbins=True)
+            fft_window = util.pad_center(fft_window, size=n_fft)
+            win_c = np.ascontiguousarray(fft_window, dtype=win_dtype)
+
+        if use_f64_kernel or y.dtype == np.float64:
+            rust_stft_complex = _rust_ext.stft_complex_f64
+        else:
+            rust_stft_complex = _rust_ext.stft_complex
 
         if y_c.ndim == 1:
             stft_matrix = rust_stft_complex(
@@ -283,11 +321,10 @@ def stft(
             # kernels when available; otherwise fall back to per-channel calls.
             lead_shape = y_c.shape[:-1]
             y_batch = y_c.reshape((-1, y_c.shape[-1]))
-            rust_stft_complex_batch = (
-                getattr(_rust_ext, "stft_complex_batch", None)
-                if y.dtype == np.float32
-                else getattr(_rust_ext, "stft_complex_f64_batch", None)
-            )
+            if use_f64_kernel or y.dtype == np.float64:
+                rust_stft_complex_batch = getattr(_rust_ext, "stft_complex_f64_batch", None)
+            else:
+                rust_stft_complex_batch = getattr(_rust_ext, "stft_complex_batch", None)
 
             # For small channel counts (especially stereo), per-channel dispatch can
             # outperform batched kernels due to lower setup/reshape overhead.
@@ -318,10 +355,18 @@ def stft(
                     lead_shape + stft_list[0].shape
                 )
 
+        if y.dtype == np.float32 and stft_matrix.dtype != np.complex64:
+            stft_matrix = stft_matrix.astype(np.complex64, copy=False)
+
         if dtype is not None and np.dtype(dtype) != stft_matrix.dtype:
             stft_matrix = stft_matrix.astype(dtype, copy=False)
 
         return stft_matrix
+
+    if fft_window is None:
+        fft_window = get_window(window, win_length, fftbins=True)
+        # Pad the window out to n_fft size
+        fft_window = util.pad_center(fft_window, size=n_fft)
 
     # Reshape so that the window can be broadcast
     fft_window = util.expand_to(fft_window, ndim=1 + y.ndim, axes=-2)
@@ -1558,17 +1603,19 @@ def phase_vocoder(
             _pv_float_dtype = np.float64
 
     if _rust_pv_fn is not None:
-        _step_int_i64 = step_int.astype(np.int64)
+        _step_int_i64 = np.ascontiguousarray(step_int.astype(np.int64))
         # Keep phase vectors in float64 for complex64 parity; f64 path already uses f64.
-        _phi = phi_advance if D.dtype == np.complex64 else phi_advance.astype(np.float64)
-        _step_alpha = step_alpha.astype(np.float64)
+        _phi = np.ascontiguousarray(
+            phi_advance if D.dtype == np.complex64 else phi_advance.astype(np.float64)
+        )
+        _step_alpha = np.ascontiguousarray(step_alpha.astype(np.float64))
 
         if D.ndim == 2:
             # Mono: single Rust call.
             # Transpose to (n_padded_frames, n_bins) for cache-friendly row access.
             _dpt = np.ascontiguousarray(D_phase.astype(_pv_float_dtype).T)
             _dmt = np.ascontiguousarray(D_mag.astype(_pv_float_dtype).T)
-            _pa = phase_acc.astype(np.float64)
+            _pa = np.ascontiguousarray(phase_acc.astype(np.float64))
             return _rust_pv_fn(_dpt, _dmt, _phi, _step_int_i64, _step_alpha, _pa)
         else:
             # Multichannel: iterate batch dimensions, fill d_stretch per channel.
@@ -1579,7 +1626,7 @@ def phase_vocoder(
             for _ch in np.ndindex(*_batch_shape):
                 _dpt = np.ascontiguousarray(_dph_typed[_ch].T)
                 _dmt = np.ascontiguousarray(_dmg_typed[_ch].T)
-                _pa = _pa_typed[_ch]
+                _pa = np.ascontiguousarray(_pa_typed[_ch])
                 d_stretch[_ch] = _rust_pv_fn(
                     _dpt, _dmt, _phi, _step_int_i64, _step_alpha, _pa
                 )
@@ -3168,7 +3215,9 @@ def _spectrogram(
             _rust_window_ok = (window_for_rust is not None)
 
         _rust_stft_ok = (
-            RUST_AVAILABLE
+            FORCE_RUST_STFT
+            and not FORCE_NUMPY_STFT
+            and RUST_AVAILABLE
             and y.ndim == 1
             and y.dtype in (np.float32, np.float64)
             and _rust_window_ok
