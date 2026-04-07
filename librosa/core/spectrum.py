@@ -355,6 +355,10 @@ def stft(
                     lead_shape + stft_list[0].shape
                 )
 
+        # Normalize FFT sign convention: current Rust kernels emit the
+        # conjugate of numpy/scipy rfft output, so map back here.
+        stft_matrix = np.conjugate(stft_matrix)
+
         if y.dtype == np.float32 and stft_matrix.dtype != np.complex64:
             stft_matrix = stft_matrix.astype(np.complex64, copy=False)
 

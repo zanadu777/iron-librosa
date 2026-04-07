@@ -298,9 +298,10 @@ pub fn stft_complex<'py>(
                     fft.process_with_scratch(&mut buf, &mut scratch);
                 });
 
-                // write complex values for positive frequencies
+                // Match numpy/scipy forward-FFT sign convention.
+                // rustfft's forward output is conjugated relative to numpy rfft.
                 for (bin, val) in col.iter_mut().enumerate() {
-                    *val = buf[bin];
+                    *val = buf[bin].conj();
                 }
             });
         });
@@ -497,7 +498,7 @@ pub fn stft_complex_f64<'py>(
                 });
 
                 for (bin, val) in col.iter_mut().enumerate() {
-                    *val = buf[bin];
+                    *val = buf[bin].conj();
                 }
             });
         });
@@ -600,7 +601,7 @@ pub fn stft_complex_batch<'py>(
                     });
 
                     for (bin, val) in ch_out.index_axis_mut(ndarray::Axis(1), frame_idx).iter_mut().enumerate() {
-                        *val = buf[bin];
+                        *val = buf[bin].conj();
                     }
                 });
             }
@@ -704,7 +705,7 @@ pub fn stft_complex_f64_batch<'py>(
                     });
 
                     for (bin, val) in ch_out.index_axis_mut(ndarray::Axis(1), frame_idx).iter_mut().enumerate() {
-                        *val = buf[bin];
+                        *val = buf[bin].conj();
                     }
                 });
             }
