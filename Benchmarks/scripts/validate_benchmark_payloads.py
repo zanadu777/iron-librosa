@@ -16,11 +16,19 @@ from typing import List
 
 from benchmark_guard import has_benchmark_payload_schema
 
+# Always resolve relative patterns against the project root, not the caller's CWD.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_SCRIPT_DIR))
+
 
 def _expand_paths(patterns: List[str]) -> List[str]:
     out: List[str] = []
     for pattern in patterns:
         matches = glob.glob(pattern)
+        if not matches and not os.path.isabs(pattern):
+            # Fallback: try the pattern relative to the project root so the
+            # script works regardless of the caller's working directory.
+            matches = glob.glob(os.path.join(_PROJECT_ROOT, pattern))
         if matches:
             out.extend(matches)
         else:
