@@ -5,6 +5,7 @@
 
 # Disable cache
 import os
+import sys
 
 try:
     os.environ.pop("LIBROSA_CACHE_DIR")
@@ -30,7 +31,8 @@ STYLE = "default"
 
 # Workaround for old freetype builds with our image fixtures
 FT_VERSION = version.parse(matplotlib.ft2font.__freetype_version__)
-OLD_FT = not (FT_VERSION >= version.parse("2.10"))
+# Image baselines are tuned for non-Windows rendering stacks and old freetype.
+OLD_FT = sys.platform.startswith("win") or not (FT_VERSION >= version.parse("2.10"))
 
 
 @pytest.fixture

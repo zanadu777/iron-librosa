@@ -62,10 +62,16 @@ def istft(*args, **kwargs):
 @wraps(_spectrum_reassign.reassigned_spectrogram)
 def reassigned_spectrogram(*args, **kwargs):
     _sync_rust_dispatch_state()
+    _spectrum_reassign.__reassign_frequencies = __reassign_frequencies
+    _spectrum_reassign.__reassign_times = __reassign_times
     return _spectrum_reassign.reassigned_spectrogram(*args, **kwargs)
 
 
 magphase = _spectrum_reassign.magphase
+
+
+__reassign_frequencies = _spectrum_reassign.__reassign_frequencies
+__reassign_times = _spectrum_reassign.__reassign_times
 
 
 @wraps(_spectrum_tf.phase_vocoder)

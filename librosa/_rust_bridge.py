@@ -77,13 +77,13 @@ FORCE_NUMPY_BEAT: bool = _beat_backend == "numpy"
 FORCE_RUST_BEAT: bool = _beat_backend == "rust"
 
 # STFT backend policy.
-# Accepted values: "auto" (default, use Rust when available), "numpy", "rust".
+# Accepted values: "auto" (default, keep NumPy parity), "numpy", "rust".
 _stft_backend = os.getenv("IRON_LIBROSA_STFT_BACKEND", "auto").strip().lower()
 if _stft_backend not in {"auto", "numpy", "rust"}:
     _stft_backend = "auto"
 
-FORCE_NUMPY_STFT: bool = _stft_backend == "numpy"
-FORCE_RUST_STFT: bool = _stft_backend in {"rust", "auto"}
+FORCE_NUMPY_STFT: bool = _stft_backend in {"numpy", "auto"}
+FORCE_RUST_STFT: bool = _stft_backend == "rust"
 
 try:
     from librosa import _rust as _rust_ext  # type: ignore[attr-defined]
