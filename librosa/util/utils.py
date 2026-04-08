@@ -651,6 +651,8 @@ def fix_frames(
         elif x_min is not None:
             frames = np.clip(frames, x_min, None)
         else:
+            # x_max must be set here because x_min is None and one bound is required.
+            assert x_max is not None
             frames = np.clip(frames, None, x_max)
 
     if pad:
