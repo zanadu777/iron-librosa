@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "updated_at": "2026-04-04T12:00:00Z",
+  "updated_at": "2026-04-08T10:03:04Z",
   "thresholds": {
-    "windows-amd64-openblas": 201226955,
-    "windows-amd64-mkl": 0,
+    "darwin-arm64-accelerate": 0,
+    "darwin-arm64-openblas": 1258598400,
     "linux-x86_64-openblas": 0,
-    "darwin-arm64-accelerate": 0
+    "windows-amd64-mkl": 0,
+    "windows-amd64-openblas": 201226955
   }
 }
-
