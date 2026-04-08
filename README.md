@@ -1,4 +1,4 @@
-[![librosa logo](docs/img/librosa_logo_text.svg)](https://librosa.org/)
+[![librosa logo](docs/img/iron-librosa_logo_text.png)](https://librosa.org/)
 
 # iron-librosa
 

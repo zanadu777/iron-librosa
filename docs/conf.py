@@ -291,7 +291,7 @@ html_use_modindex = True
 # Output file base name for HTML help builder.
 htmlhelp_basename = "librosadoc"
 
-html_logo = "img/librosa_logo_text.svg"
+html_logo = "img/iron-librosa_logo_text.png"
 
 html_theme_options = {
     "logo_only": True,
@@ -340,7 +340,7 @@ latex_documents = [
 latex_engine = "xelatex"
 # The name of an image file (relative to this directory) to place at the top of
 # the title page.
-latex_logo = "img/librosa_logo_text.png"
+latex_logo = "img/iron-librosa_logo_text.png"
 
 # For "manual" documents, if this is true, then toplevel headings are parts,
 # not chapters.
