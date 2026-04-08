@@ -74,8 +74,8 @@ These do not block CPU-complete baseline, but must be tracked.
     - `benchmark_phase5_spectral.py`
     - `benchmark_phase5_tuning.py`
     - `benchmark_phase11_contrast_multichannel.py`
-- [ ] Any benchmark result with speedup `< 1.5x` has an explicit auto-review note and rationale. (`REQUIRED`)
-  - Evidence: benchmark JSON includes `review_required=true` and phase report includes decision/risk notes.
+- [x] Any benchmark result with speedup `< 1.5x` has an explicit auto-review note and rationale. (`PASS`)
+  - Evidence: `Benchmarks/results/tmp_phase5_spectral_review.json`, `Benchmarks/results/tmp_phase5_tuning_review.json`, `Benchmarks/results/tmp_phase5_chroma_review.json`, `Benchmarks/results/tmp_phase14_review_check.json`, `Benchmarks/results/tmp_phase12_review_check.json`, archived rationale in `cpu_complete_eval_20260404.txt`.
 - [x] Results archived to a dated text file in repo root. (`PASS`)
   - Captured: `cpu_complete_eval_20260404.txt`
 
@@ -93,10 +93,9 @@ After signoff, proceed to Linux port, then macOS, and re-run this checklist per 
 
 ## 6) Current Decision (updated 2026-04-08)
 
-- Decision: mel-threshold blocker is `CLOSED`; proceed with final CPU signoff review.
-- Reason: multi-host calibration workflow succeeded and merged measured registry updates for Linux/macOS.
-- Evidence anchors: workflow run `24115024508`, PR `#1`, merge commit `29d89d95`, `scripts/mel_threshold_registry.json`, `tests/test_mel_threshold_policy.py` (`6 passed`).
-- Remaining signoff work: complete any still-open non-mel checklist items in Section 4 before issuing final global CPU `GO`.
+- Decision: `GO` for global CPU-complete signoff.
+- Reason: mel blocker is closed and the remaining non-mel Section 4 review gate is now documented and closed.
+- Evidence anchors: workflow run `24115024508`, PR `#1`, merge commit `29d89d95`, `scripts/mel_threshold_registry.json`, `tests/test_mel_threshold_policy.py` (`6 passed`), `cpu_complete_eval_20260404.txt`.
 
 For review-friendly release notes, see `CPU_SIGNOFF_NOTE_2026-04-04.md`.
 

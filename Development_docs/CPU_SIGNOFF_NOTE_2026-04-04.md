@@ -3,7 +3,7 @@
 ## Decision (updated 2026-04-08)
 
 - Mel-threshold blocker status: `CLOSED`
-- CPU-complete global signoff: pending final review of any remaining non-mel checklist items
+- CPU-complete global signoff: `GO`
 
 ## Why
 
@@ -22,11 +22,11 @@
 
 ## Remaining Blocker
 
-- None for mel-threshold policy; continue final CPU signoff review for any non-mel open checklist items.
+- None. Mel and non-mel checklist blockers are closed.
 
 ## Exit Criteria (to flip to GO)
 
 1. Keep the calibration workflow runnable for future host/profile refreshes.
 2. Keep policy resolution behavior covered by `tests/test_mel_threshold_policy.py`.
-3. Complete any remaining non-mel items in `CPU_COMPLETE_CHECKLIST.md` before final global signoff.
+3. Keep `cpu_complete_eval_20260404.txt` updated when new sub-1.5x benchmark reviews are added.
 

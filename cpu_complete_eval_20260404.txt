@@ -1,0 +1,50 @@
+CPU complete evaluation log (2026-04-04)
+Updated: 2026-04-08
+
+Purpose
+- This log closes the non-mel Section 4 review requirement in Development_docs/CPU_COMPLETE_CHECKLIST.md:
+  "Any benchmark result with speedup < 1.5x has an explicit auto-review note and rationale."
+
+Reviewed artifacts
+- Benchmarks/results/tmp_phase5_spectral_review.json
+- Benchmarks/results/tmp_phase5_tuning_review.json
+- Benchmarks/results/tmp_phase5_chroma_review.json
+- Benchmarks/results/tmp_phase14_review_check.json
+- Benchmarks/results/tmp_phase12_review_check.json
+- Development_docs/PHASE5_COMPLETION.md
+- Development_docs/PHASE13_CQT_VQT_COMPLETION_REPORT.md
+- Development_docs/PHASE14_BEAT_TRACK_COMPLETION_REPORT.md
+
+Auto-review decisions
+1) Phase 5 spectral/chroma family (threshold 1.5x)
+   - Artifact flags: present in tmp_phase5_spectral_review.json and tmp_phase5_chroma_review.json.
+   - Observation: many cases are near parity (around 1.0x), with some mild regressions and mild wins.
+   - Decision: KEEP CURRENT DEFAULT POLICY.
+   - Rationale: parity gates are green; no severe collapse documented for medium+ workloads in checklist evidence.
+     Performance is workload/host dependent; this is acceptable under the CPU baseline rule when documented.
+
+2) Phase 5 tuning family (threshold 1.5x)
+   - Artifact flags: present in tmp_phase5_tuning_review.json.
+   - Observation: full estimate_tuning speedups are around parity to modest gains.
+   - Decision: KEEP GUARDED (opt-in/threshold policy).
+   - Rationale: matches PHASE5_COMPLETION.md conclusion that upstream piptrack dominates end-to-end cost.
+
+3) Phase 14 beat-track DP seam (threshold 1.5x)
+   - Artifact flags: present in tmp_phase14_review_check.json.
+   - Observation: click_120bpm_30s and noisy_120s are flagged; DP stage remains tiny share of total runtime.
+   - Decision: OPT-IN (not default).
+   - Rationale: matches PHASE14_BEAT_TRACK_COMPLETION_REPORT.md promotion decision.
+
+4) Phase 13 CQT/VQT seam
+   - Artifact note: tmp_phase12_review_check.json contains profiling context; PHASE13 report contains promotion decision.
+   - Observation: CQT/VQT speedups are near parity and inconsistent across workloads.
+   - Decision: OPT-IN (not default).
+   - Rationale: matches PHASE13_CQT_VQT_COMPLETION_REPORT.md.
+
+Conclusion
+- Non-mel review requirement is satisfied:
+  - auto-review flags were produced,
+  - each flagged family has an explicit decision,
+  - rationale is documented with evidence anchors.
+- This closes the remaining non-mel blocker for CPU signoff documentation.
+
