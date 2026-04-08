@@ -227,24 +227,26 @@ args = parser.parse_args()
 profile_key = args.profile or _default_profile_key()
 print(f"Profile key: {profile_key}")
 
-spectral_path = Path(__file__).parent / "librosa" / "feature" / "spectral.py"
+project_root = Path(__file__).resolve().parent.parent
+spectral_path = project_root / "librosa" / "feature" / "spectral.py"
 if not spectral_path.exists():
     print(f"WARN: spectral.py not found at {spectral_path}; skipping patch.")
-    sys.exit(0)
+    spectral_path = None
 
-src = spectral_path.read_text(encoding="utf-8")
-pattern = re.compile(
-    r"(_MEL_RUST_WORK_THRESHOLD\s*=\s*)(\d[\d_]*)"
-)
-new_src, n_subs = pattern.subn(rf"\g<1>{threshold:_}", src)
+if spectral_path is not None:
+    src = spectral_path.read_text(encoding="utf-8")
+    pattern = re.compile(
+        r"(_MEL_RUST_WORK_THRESHOLD\s*=\s*)(\d[\d_]*)"
+    )
+    new_src, n_subs = pattern.subn(rf"\g<1>{threshold:_}", src)
 
-if n_subs == 0:
-    print("WARN: _MEL_RUST_WORK_THRESHOLD not found in spectral.py; skipping patch.")
-elif args.dry_run:
-    print(f"\n[dry-run] would write threshold={threshold:_} to {spectral_path}")
-else:
-    spectral_path.write_text(new_src, encoding="utf-8")
-    print(f"\n[OK] Wrote _MEL_RUST_WORK_THRESHOLD = {threshold:_} -> {spectral_path}")
+    if n_subs == 0:
+        print("WARN: _MEL_RUST_WORK_THRESHOLD not found in spectral.py; skipping patch.")
+    elif args.dry_run:
+        print(f"\n[dry-run] would write threshold={threshold:_} to {spectral_path}")
+    else:
+        spectral_path.write_text(new_src, encoding="utf-8")
+        print(f"\n[OK] Wrote _MEL_RUST_WORK_THRESHOLD = {threshold:_} -> {spectral_path}")
 
 if not args.skip_registry:
     _update_registry(
