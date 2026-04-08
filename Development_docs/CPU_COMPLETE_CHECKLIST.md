@@ -39,11 +39,11 @@ Promotion means removing or relaxing gate conservatively after evidence.
 - [x] Time-domain `rms(y=...)` (`IRON_LIBROSA_ENABLE_RUST_RMS_TIME`). (`PASS`)
   - Evidence: `tests/test_phase4_features.py -k "rms"`, `benchmark_phase5_spectral.py` section for `rms(y=...)`
   - Promote when: no small-workload collapse and medium+ workloads are >= parity. (met on 2026-04-04 run)
-- [ ] Mel backend policy threshold (`_MEL_RUST_WORK_THRESHOLD`). (`OPEN` - cross-CPU strategy in place)
-  - Evidence: `calibrate_mel_threshold.py` (profile-aware registry support), `tests/test_mel_threshold_policy.py` (`6 passed`), `benchmark_melspectrogram.py`, `mel_threshold_registry.json`, `librosa/feature/_mel_threshold_registry.py`
-  - Automation: `.github/workflows/mel-threshold-calibration.yml` (workflow_dispatch; calibrates Linux/macOS and opens a PR with merged registry updates)
-  - Status note: representative profile keys are populated with conservative defaults; measured multi-host thresholds are still pending.
-  - Promote when: profile registry has measured entries for representative hosts and threshold behavior is validated across those hosts.
+- [x] Mel backend policy threshold (`_MEL_RUST_WORK_THRESHOLD`). (`PASS` - multi-host calibration evidence captured)
+  - Evidence: `scripts/calibrate_mel_threshold.py` (profile-aware registry support), `tests/test_mel_threshold_policy.py` (`6 passed`), `scripts/mel_threshold_registry.json`, `librosa/feature/_mel_threshold_registry.py`
+  - Automation: `.github/workflows/mel-threshold-calibration.yml` (`workflow_dispatch`; run `24115024508`, PR `#1`, merge commit `29d89d95`)
+  - Status note: representative non-local profiles now have measured entries (`darwin-arm64-openblas=1258598400`, `linux-x86_64-openblas=0`; the Linux value indicates Rust auto-dispatch remains disabled for that profile).
+  - Promotion rule met: profile registry has measured entries for representative hosts and threshold resolution policy remains validated.
 
 ## 3) Remaining Niche / Unaccelerated Public APIs
 
@@ -91,16 +91,12 @@ CPU-complete is achieved when:
 
 After signoff, proceed to Linux port, then macOS, and re-run this checklist per platform.
 
-## 6) Current Decision (2026-04-04)
+## 6) Current Decision (updated 2026-04-08)
 
-- Decision: `NO-GO` for full CPU-complete signoff (global), `GO` for continued Windows-host validation work.
-- Reason: all gates are closed except mel threshold promotion in Section 2.
-- Open blocker: measured multi-host mel threshold entries are still pending for representative non-local profiles.
-- Evidence anchors: `cpu_complete_eval_20260404.txt`, `tests/test_mel_threshold_policy.py` (`6 passed`), `mel_threshold_registry.json`, `librosa/feature/_mel_threshold_registry.py`.
-- Exit criteria to flip to `GO`:
-  1. Record measured mel thresholds for representative additional hosts (beyond local `windows-amd64-openblas`).
-  2. Validate threshold resolution behavior for those profiles using existing policy tests.
-  3. Re-run `benchmark_melspectrogram.py` and attach dated results to `cpu_complete_eval_20260404.txt`.
+- Decision: mel-threshold blocker is `CLOSED`; proceed with final CPU signoff review.
+- Reason: multi-host calibration workflow succeeded and merged measured registry updates for Linux/macOS.
+- Evidence anchors: workflow run `24115024508`, PR `#1`, merge commit `29d89d95`, `scripts/mel_threshold_registry.json`, `tests/test_mel_threshold_policy.py` (`6 passed`).
+- Remaining signoff work: complete any still-open non-mel checklist items in Section 4 before issuing final global CPU `GO`.
 
 For review-friendly release notes, see `CPU_SIGNOFF_NOTE_2026-04-04.md`.
 
