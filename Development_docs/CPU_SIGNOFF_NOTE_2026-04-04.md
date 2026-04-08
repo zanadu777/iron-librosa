@@ -17,6 +17,7 @@
 - Mel policy tests: `tests/test_mel_threshold_policy.py` (`6 passed`)
 - Mel parity sample: `tests/test_features.py -k "melspectrogram"` (`3 passed`)
 - Registry artifacts: `mel_threshold_registry.json`, `librosa/feature/_mel_threshold_registry.py`
+- Collection workflow: `.github/workflows/mel-threshold-calibration.yml` (`workflow_dispatch`)
 
 ## Remaining Blocker
 

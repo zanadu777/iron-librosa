@@ -41,6 +41,7 @@ Promotion means removing or relaxing gate conservatively after evidence.
   - Promote when: no small-workload collapse and medium+ workloads are >= parity. (met on 2026-04-04 run)
 - [ ] Mel backend policy threshold (`_MEL_RUST_WORK_THRESHOLD`). (`OPEN` - cross-CPU strategy in place)
   - Evidence: `calibrate_mel_threshold.py` (profile-aware registry support), `tests/test_mel_threshold_policy.py` (`6 passed`), `benchmark_melspectrogram.py`, `mel_threshold_registry.json`, `librosa/feature/_mel_threshold_registry.py`
+  - Automation: `.github/workflows/mel-threshold-calibration.yml` (workflow_dispatch; calibrates Linux/macOS and opens a PR with merged registry updates)
   - Status note: representative profile keys are populated with conservative defaults; measured multi-host thresholds are still pending.
   - Promote when: profile registry has measured entries for representative hosts and threshold behavior is validated across those hosts.
 
