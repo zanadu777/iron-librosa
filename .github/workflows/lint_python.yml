@@ -6,13 +6,17 @@ env:
 
 jobs:
   lint_python:
-    name: "Lint and code analysis"
-    runs-on: ubuntu-latest
+    name: "Lint and code analysis (${{ matrix.os }}, py${{ matrix.python-version }})"
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
       matrix:
         include:
           - os: ubuntu-latest
+            python-version: "3.11"
+            channel-priority: "flexible"
+            envfile: ".github/environment-lint.yml"
+          - os: ubuntu-24.04
             python-version: "3.11"
             channel-priority: "flexible"
             envfile: ".github/environment-lint.yml"
