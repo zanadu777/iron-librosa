@@ -1,5 +1,11 @@
 # EXECUTIVE SUMMARY - Rust Dispatch Hotfix Delivery
 
+> Historical snapshot (April 4, 2026 hotfix).
+>
+> For current program status and release-gate state, use:
+> - `Development_docs/CPU_COMPLETE_CHECKLIST.md`
+> - `Development_docs/CPU_SIGNOFF_NOTE_2026-04-04.md` (updated 2026-04-08, CPU signoff `GO`)
+
 **Date:** April 4, 2026  
 **Delivered By:** GitHub Copilot  
 **Status:** ✅ COMPLETE AND VERIFIED  

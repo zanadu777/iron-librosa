@@ -1,5 +1,11 @@
 # Executive Summary: Expanded STFT Fast-Path Use Cases
 
+> Historical phase snapshot.
+>
+> For current cross-phase readiness/signoff status, see:
+> - `Development_docs/CPU_COMPLETE_CHECKLIST.md`
+> - `Development_docs/CPU_SIGNOFF_NOTE_2026-04-04.md` (updated 2026-04-08, CPU signoff `GO`)
+
 ## Overview
 
 We've successfully implemented and validated **Phase 1** of the expanded STFT fast-path, introducing **complex STFT output** for phase-dependent audio features. This enables critical use cases like phase vocoder (time-stretching), pitch-shifting, and advanced chroma analysis with **~210x speedup** over pure-Python implementation.

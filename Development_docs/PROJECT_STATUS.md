@@ -1,6 +1,11 @@
 # iron-librosa: Comprehensive Status Report
 ## Last updated: 2026-04-05
 
+> Note: this report is a broader project snapshot and may lag final release-gate decisions.
+> Canonical current signoff state lives in:
+> - `Development_docs/CPU_COMPLETE_CHECKLIST.md`
+> - `Development_docs/CPU_SIGNOFF_NOTE_2026-04-04.md` (updated 2026-04-08, CPU signoff `GO`)
+
 ---
 
 ## Project Overview
