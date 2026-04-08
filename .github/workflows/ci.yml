@@ -159,6 +159,11 @@ jobs:
           shell: bash -l {0}
           run: MYPYPATH=Benchmarks/scripts python -m mypy --pretty tests
 
-        - name: Validate Phase 16 benchmark payloads
+        - name: Generate and validate Phase 16 benchmark payloads
+          if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
           shell: bash -l {0}
-          run: python Benchmarks/scripts/validate_benchmark_payloads.py --paths Benchmarks/results/phase16_host_*.json --require-files
+          run: |
+            mkdir -p Benchmarks/results
+            python Benchmarks/scripts/benchmark_phase15_beat_upstream.py --json-out Benchmarks/results/phase16_host_baseline.json
+            IRON_LIBROSA_RUST_DISPATCH=1 python Benchmarks/scripts/benchmark_phase15_beat_upstream.py --json-out Benchmarks/results/phase16_host_rust.json --compare-with Benchmarks/results/phase16_host_baseline.json
+            python Benchmarks/scripts/validate_benchmark_payloads.py --paths Benchmarks/results/phase16_host_*.json --require-files
