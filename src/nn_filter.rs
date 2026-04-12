@@ -13,6 +13,8 @@ use ndarray::parallel::prelude::*;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 
+use crate::backend::{resolved_rust_device, RustDevice};
+
 /// Minimum total-element count (n_frames × n_cols) at which Rayon parallelism
 /// is beneficial.  Below this threshold the sequential path is faster because
 /// thread-pool overhead dominates.
@@ -21,6 +23,24 @@ const PAR_THRESHOLD: usize = 16_000;
 #[pyfunction]
 #[pyo3(signature = (s, rec_data, rec_indices, rec_indptr, weighted = false))]
 pub fn nn_filter<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    rec_data: PyReadonlyArray1<'py, f64>,
+    rec_indices: PyReadonlyArray1<'py, i32>,
+    rec_indptr: PyReadonlyArray1<'py, i32>,
+    weighted: bool,
+) -> Bound<'py, PyArray2<f64>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => nn_filter_cpu(py, s, rec_data, rec_indices, rec_indptr, weighted),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => nn_filter_cpu(py, s, rec_data, rec_indices, rec_indptr, weighted),
+        RustDevice::Auto => nn_filter_cpu(py, s, rec_data, rec_indices, rec_indptr, weighted),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => nn_filter_cpu(py, s, rec_data, rec_indices, rec_indptr, weighted),
+    }
+}
+
+fn nn_filter_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     rec_data: PyReadonlyArray1<'py, f64>,

@@ -10,6 +10,16 @@ name = "_rust"
 # cdylib = Python extension (.pyd on Windows, .so on Linux/macOS)
 crate-type = ["cdylib"]
 
+[features]
+# Keep default behavior unchanged across platforms.
+default = []
+# Phase-0 scaffold: Apple GPU path remains fully opt-in until implementation lands.
+apple-gpu = ["dep:metal"]
+# Phase 21: CUDA GPU path for PC/NVIDIA. Opt-in only until benchmark-validated.
+# Activate with: cargo build --features cuda-gpu
+# Environment: IRON_LIBROSA_RUST_DEVICE=cuda-gpu
+cuda-gpu = []
+
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
 numpy = "0.22"
@@ -20,6 +30,9 @@ rayon = "1"
 # so there is no thread-pool contention with NumPy's MKL.
 faer = { version = "0.24.0", default-features = false, features = ["rayon"] }
 rustfft = "6.4.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = { version = "0.29", optional = true }
 
 [profile.release]
 # Optimise heavily for release builds; debug info adds no value in .pyd files.

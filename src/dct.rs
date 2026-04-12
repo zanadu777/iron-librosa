@@ -2,11 +2,28 @@ use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use crate::backend::{resolved_rust_device, RustDevice};
+
 /// DCT-II with ortho normalization along axis 0 for a 2D (n_mels, n_frames) array.
 /// Returns shape (min(n_out, n_mels), n_frames).
 #[pyfunction]
 #[pyo3(signature = (s, n_out))]
 pub fn dct2_ortho_f32<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    n_out: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => dct2_ortho_f32_cpu(py, s, n_out),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => dct2_ortho_f32_cpu(py, s, n_out),
+        RustDevice::Auto => dct2_ortho_f32_cpu(py, s, n_out),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => dct2_ortho_f32_cpu(py, s, n_out),
+    }
+}
+
+fn dct2_ortho_f32_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f32>,
     n_out: usize,
@@ -50,6 +67,21 @@ pub fn dct2_ortho_f64<'py>(
     s: PyReadonlyArray2<'py, f64>,
     n_out: usize,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => dct2_ortho_f64_cpu(py, s, n_out),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => dct2_ortho_f64_cpu(py, s, n_out),
+        RustDevice::Auto => dct2_ortho_f64_cpu(py, s, n_out),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => dct2_ortho_f64_cpu(py, s, n_out),
+    }
+}
+
+fn dct2_ortho_f64_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    n_out: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let x = s.as_array();
     let n_mels = x.shape()[0];
     let n_frames = x.shape()[1];
@@ -79,4 +111,3 @@ pub fn dct2_ortho_f64<'py>(
 
     Ok(out.into_pyarray_bound(py))
 }
-

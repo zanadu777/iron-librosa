@@ -24,33 +24,31 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rustfft::num_complex::Complex;
 
+use crate::backend::{resolved_rust_device, RustDevice};
+
 // ── f32 / complex64 path ─────────────────────────────────────────────────────
 
-/// Phase vocoder inner loop for complex64 (f32) spectrograms.
-///
-/// Parameters
-/// ----------
-/// d_phase_t : ndarray[f32], shape (n_padded_frames, n_bins), C-contiguous
-///     Per-frame phase angles from the *padded* STFT, transposed.
-///     Produce with: ``np.ascontiguousarray(np.angle(D_padded).astype(np.float32).T)``
-/// d_mag_t : ndarray[f32], shape (n_padded_frames, n_bins), C-contiguous
-///     Per-frame magnitudes from the *padded* STFT, transposed.
-///     Produce with: ``np.ascontiguousarray(np.abs(D_padded).astype(np.float32).T)``
-/// phi_advance : ndarray[f32], shape (n_bins,)
-///     Expected phase advance per hop per bin:
-///     ``(hop_length * fft_frequencies(sr=2π, n_fft=n_fft)).astype(np.float32)``
-/// step_int : ndarray[i64], shape (n_out,)
-///     Integer frame indices: ``np.floor(time_steps).astype(np.int64)``
-/// step_alpha : ndarray[f64], shape (n_out,)
-///     Fractional frame weights: ``time_steps - step_int``
-/// phase_acc_init : ndarray[f32], shape (n_bins,)
-///     Initial phase accumulator (first frame): ``np.angle(D[..., 0]).astype(np.float32)``
-///
-/// Returns
-/// -------
-/// out : ndarray[complex64], shape (n_bins, n_out) — equivalent to ``d_stretch``
 #[pyfunction]
 pub fn phase_vocoder_f32<'py>(
+    py: Python<'py>,
+    d_phase_t: PyReadonlyArray2<'py, f32>,
+    d_mag_t: PyReadonlyArray2<'py, f32>,
+    phi_advance: PyReadonlyArray1<'py, f64>,
+    step_int: PyReadonlyArray1<'py, i64>,
+    step_alpha: PyReadonlyArray1<'py, f64>,
+    phase_acc_init: PyReadonlyArray1<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<Complex<f32>>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => phase_vocoder_f32_cpu(py, d_phase_t, d_mag_t, phi_advance, step_int, step_alpha, phase_acc_init),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => phase_vocoder_f32_cpu(py, d_phase_t, d_mag_t, phi_advance, step_int, step_alpha, phase_acc_init),
+        RustDevice::Auto => phase_vocoder_f32_cpu(py, d_phase_t, d_mag_t, phi_advance, step_int, step_alpha, phase_acc_init),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => phase_vocoder_f32_cpu(py, d_phase_t, d_mag_t, phi_advance, step_int, step_alpha, phase_acc_init),
+    }
+}
+
+fn phase_vocoder_f32_cpu<'py>(
     py: Python<'py>,
     d_phase_t: PyReadonlyArray2<'py, f32>,
     d_mag_t: PyReadonlyArray2<'py, f32>,
@@ -135,12 +133,27 @@ pub fn phase_vocoder_f32<'py>(
 
 // ── f64 / complex128 path ────────────────────────────────────────────────────
 
-/// Phase vocoder inner loop for complex128 (f64) spectrograms.
-///
-/// Same algorithm as `phase_vocoder_f32`, operating on f64 arrays.
-/// See `phase_vocoder_f32` for parameter documentation.
 #[pyfunction]
 pub fn phase_vocoder_f64<'py>(
+    py: Python<'py>,
+    d_phase_t: PyReadonlyArray2<'py, f64>,
+    d_mag_t: PyReadonlyArray2<'py, f64>,
+    phi_advance: PyReadonlyArray1<'py, f64>,
+    step_int: PyReadonlyArray1<'py, i64>,
+    step_alpha: PyReadonlyArray1<'py, f64>,
+    phase_acc_init: PyReadonlyArray1<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<Complex<f64>>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => phase_vocoder_f64_cpu(py, d_phase_t, d_mag_t, phi_advance, step_int, step_alpha, phase_acc_init),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => phase_vocoder_f64_cpu(py, d_phase_t, d_mag_t, phi_advance, step_int, step_alpha, phase_acc_init),
+        RustDevice::Auto => phase_vocoder_f64_cpu(py, d_phase_t, d_mag_t, phi_advance, step_int, step_alpha, phase_acc_init),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => phase_vocoder_f64_cpu(py, d_phase_t, d_mag_t, phi_advance, step_int, step_alpha, phase_acc_init),
+    }
+}
+
+fn phase_vocoder_f64_cpu<'py>(
     py: Python<'py>,
     d_phase_t: PyReadonlyArray2<'py, f64>,
     d_mag_t: PyReadonlyArray2<'py, f64>,

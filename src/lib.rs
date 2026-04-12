@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 
 
 mod convert;
+mod backend;
 mod dct;
 mod mel;
 mod nn_filter;
@@ -21,6 +22,9 @@ mod phase_vocoder;
 mod cqt_vqt;
 mod beat;
 mod rhythm;
+mod accelerate_fft;
+mod metal_fft;
+mod cuda_fft;
 
 /// The iron-librosa Rust extension module (`librosa._rust`).
 #[pymodule]
@@ -32,6 +36,7 @@ fn iron_librosa_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ----- convert -----
     m.add_function(wrap_pyfunction!(convert::hz_to_mel, m)?)?;
     m.add_function(wrap_pyfunction!(convert::mel_to_hz, m)?)?;
+    m.add_function(wrap_pyfunction!(backend::rust_backend_info, m)?)?;
 
     // ----- decompose -----
     // NMF is handled by Python/scikit-learn; no Rust implementation exposed.

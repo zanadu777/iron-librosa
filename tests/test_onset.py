@@ -461,6 +461,59 @@ def test_onset_strength_multi_rust_ref_f64_parity(monkeypatch):
 
 
 @pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_median_ref_f32")),
+    reason="Rust onset median kernel is not available",
+)
+def test_onset_strength_multi_rust_median_ref_parity(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(72, 140)).astype(np.float32)
+    ref = np.abs(np.random.randn(72, 140)).astype(np.float32)
+
+    odf_rust = librosa.onset.onset_strength_multi(
+        S=S, lag=2, max_size=1, ref=ref, aggregate=np.median, center=False
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S, lag=2, max_size=1, ref=ref, aggregate=np.median, center=False
+    )
+
+    assert np.allclose(odf_rust, odf_numpy)
+
+
+@pytest.mark.skipif(
+    not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_median_ref_f32")),
+    reason="Rust onset median kernel is not available",
+)
+def test_onset_strength_multi_rust_median_fallback_channels(monkeypatch):
+    srand()
+
+    S = np.abs(np.random.randn(48, 120)).astype(np.float32)
+
+    odf_default = librosa.onset.onset_strength_multi(
+        S=S,
+        lag=1,
+        max_size=1,
+        aggregate=np.median,
+        channels=[0, 16, 32, 48],
+        center=False,
+    )
+
+    monkeypatch.setattr(onset_mod, "RUST_AVAILABLE", False)
+    odf_numpy = librosa.onset.onset_strength_multi(
+        S=S,
+        lag=1,
+        max_size=1,
+        aggregate=np.median,
+        channels=[0, 16, 32, 48],
+        center=False,
+    )
+
+    assert np.allclose(odf_default, odf_numpy)
+
+
+@pytest.mark.skipif(
     not (RUST_AVAILABLE and hasattr(_rust_ext, "onset_flux_mean_maxfilter_f32")),
     reason="Rust onset max-filter kernel is not available",
 )

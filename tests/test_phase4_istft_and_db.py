@@ -53,6 +53,40 @@ class TestISTFTF64:
 
 
 @pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
+def test_istft_f32_device_override_matches_cpu(monkeypatch):
+    rng = np.random.default_rng(44001)
+    d = (
+        rng.standard_normal((513, 24)).astype(np.float32)
+        + 1j * rng.standard_normal((513, 24)).astype(np.float32)
+    )
+
+    monkeypatch.setenv("IRON_LIBROSA_RUST_DEVICE", "cpu")
+    out_cpu = _rust_ext.istft_f32(np.ascontiguousarray(d), n_fft=1024, hop_length=256, window=None)
+
+    monkeypatch.setenv("IRON_LIBROSA_RUST_DEVICE", "apple-gpu")
+    out_gpu_req = _rust_ext.istft_f32(np.ascontiguousarray(d), n_fft=1024, hop_length=256, window=None)
+
+    np.testing.assert_allclose(out_cpu, out_gpu_req, rtol=5e-4, atol=5e-4)
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
+def test_istft_f64_device_override_matches_cpu(monkeypatch):
+    rng = np.random.default_rng(44002)
+    d = (
+        rng.standard_normal((513, 24)).astype(np.float64)
+        + 1j * rng.standard_normal((513, 24)).astype(np.float64)
+    )
+
+    monkeypatch.setenv("IRON_LIBROSA_RUST_DEVICE", "cpu")
+    out_cpu = _rust_ext.istft_f64(np.ascontiguousarray(d), n_fft=1024, hop_length=256, window=None)
+
+    monkeypatch.setenv("IRON_LIBROSA_RUST_DEVICE", "apple-gpu")
+    out_gpu_req = _rust_ext.istft_f64(np.ascontiguousarray(d), n_fft=1024, hop_length=256, window=None)
+
+    np.testing.assert_allclose(out_cpu, out_gpu_req, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
 class TestPowerToDbF32:
     """Test power_to_db float32 kernel"""
 

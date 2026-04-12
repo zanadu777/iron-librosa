@@ -13,6 +13,49 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::option::Option as StdOption;
 
+use crate::backend::{requested_rust_device, resolved_rust_device, RustDevice};
+
+fn fft_timing_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_FFT_TIMING")
+            .ok()
+            .map(|s| {
+                matches!(
+                    s.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Workload size threshold for GPU FFT dispatch in Auto mode.
+/// When n_frames * n_fft * log2(n_fft) >= this value, GPU dispatch is used.
+fn fft_gpu_work_threshold() -> usize {
+    static THRESHOLD: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *THRESHOLD.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_FFT_GPU_WORK_THRESHOLD")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(100_000_000)
+    })
+}
+
+/// Optional minimum frame count for STFT GPU dispatch.
+/// When set (>0), workloads with fewer frames run on CPU even on apple-gpu mode.
+/// Phase 19 A/B testing showed min_frames=200 reduces regressions and improves score (0.887 vs 0.767).
+/// Default changed to 200 in Phase 20 based on empirical optimization.
+fn fft_gpu_min_frames() -> usize {
+    static MIN_FRAMES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN_FRAMES.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_FFT_GPU_MIN_FRAMES")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(200)  // Phase 20: Changed from 0 to 200 (Phase 19 A/B winner)
+    })
+}
+
 // ── per-thread state ──────────────────────────────────────────────────────────
 // Each Rayon worker thread owns its own FftPlanner (plan cache), FFT scratch
 // buffer, and windowed-frame buffer.  This eliminates per-frame heap allocation
@@ -212,6 +255,9 @@ pub fn stft_complex<'py>(
     center: bool,
     window: StdOption<PyReadonlyArray1<'py, f32>>,
 ) -> PyResult<Bound<'py, PyArray2<Complex<f32>>>> {
+    let timing_enabled = fft_timing_enabled();
+    let total_start = std::time::Instant::now();
+
     if n_fft < 2 {
         return Err(PyValueError::new_err("n_fft must be >= 2"));
     }
@@ -254,6 +300,72 @@ pub fn stft_complex<'py>(
         Arc::new(hann_window(n_fft))
     };
 
+    // ── GPU dispatch (AppleGpu) ───────────────────────────────────────────────
+    // When apple-gpu device is requested, use Metal FFT (if available / enabled)
+    // with an automatic CPU fallback via fft_forward_with_fallback.
+    // Falls back to Rayon CPU path when Auto mode doesn't meet work threshold.
+    // Phase 20: Added min_frames gate (default 200) to reduce small-batch dispatch overhead.
+    let requested_device = requested_rust_device();
+    let resolved_device = resolved_rust_device();
+    let work_size = n_frames
+        .saturating_mul(n_fft)
+        .saturating_mul((n_fft as f32).log2() as usize);
+    let use_gpu = match requested_device {
+        RustDevice::AppleGpu => resolved_device == RustDevice::AppleGpu && n_frames >= fft_gpu_min_frames(),
+        RustDevice::Auto => {
+            resolved_device == RustDevice::AppleGpu && work_size >= fft_gpu_work_threshold() && n_frames >= fft_gpu_min_frames()
+        }
+        RustDevice::Cpu => false,
+        // Phase 21 stub: CUDA GPU dispatch not yet implemented; route to CPU.
+        RustDevice::CudaGpu => false,
+    };
+
+    if use_gpu {
+        // Batched path: process all frames in one GPU dispatch to amortize launch/copy overhead.
+        let gpu_start = std::time::Instant::now();
+        let mut out = ndarray::Array2::<Complex<f32>>::zeros((n_bins, n_frames));
+        let win = &*window;
+        let mut batch_buf = vec![Complex::<f32>::default(); n_frames * n_fft];
+
+        for frame_idx in 0..n_frames {
+            let start = frame_idx * hop_length;
+            let frame_off = frame_idx * n_fft;
+            for k in 0..n_fft {
+                batch_buf[frame_off + k] = Complex::new(y_padded[start + k] * win[k], 0.0);
+            }
+        }
+
+        // Try batched Metal GPU; fall back to CPU rustfft on any error.
+        let _ = crate::metal_fft::fft_forward_batched_chunked_with_fallback(
+            &mut batch_buf,
+            n_fft,
+            n_frames,
+        );
+
+        for frame_idx in 0..n_frames {
+            let frame_off = frame_idx * n_fft;
+            for (bin, val) in out.index_axis_mut(ndarray::Axis(1), frame_idx).iter_mut().enumerate() {
+                // Conjugate to match NumPy/scipy rfft sign convention.
+                *val = batch_buf[frame_off + bin].conj();
+            }
+        }
+
+        if timing_enabled {
+            eprintln!(
+                "[iron-librosa][stft_complex] mode=gpu requested={:?} resolved={:?} n_fft={} n_frames={} work={} total_ms={:.3} gpu_ms={:.3}",
+                requested_device,
+                resolved_device,
+                n_fft,
+                n_frames,
+                work_size,
+                total_start.elapsed().as_secs_f64() * 1000.0,
+                gpu_start.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
+        return Ok(out.into_pyarray_bound(py));
+    }
+
+    // ── CPU path (Rayon parallel) ────────────────────────────────────────────
     // Output (n_bins × n_frames) C-order; each column = one frame.
     let mut out = ndarray::Array2::<Complex<f32>>::zeros((n_bins, n_frames));
 
@@ -305,6 +417,18 @@ pub fn stft_complex<'py>(
                 }
             });
         });
+
+    if timing_enabled {
+        eprintln!(
+            "[iron-librosa][stft_complex] mode=cpu requested={:?} resolved={:?} n_fft={} n_frames={} work={} total_ms={:.3}",
+            requested_device,
+            resolved_device,
+            n_fft,
+            n_frames,
+            work_size,
+            total_start.elapsed().as_secs_f64() * 1000.0,
+        );
+    }
 
     Ok(out.into_pyarray_bound(py))
 }

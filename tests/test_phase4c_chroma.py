@@ -74,6 +74,28 @@ class TestChromaProjectKernels:
 
         np.testing.assert_allclose(rust_result, numpy_result, rtol=1e-10)
 
+    @pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
+    def test_chroma_project_f32_device_override_matches_cpu(self, monkeypatch):
+        """Requesting apple-gpu should currently match forced CPU output."""
+        np.random.seed(42)
+        n_bins, n_frames, n_chroma = 513, 64, 12
+        S = np.abs(np.random.randn(n_bins, n_frames)).astype(np.float32)
+        chromafb = np.abs(np.random.randn(n_chroma, n_bins)).astype(np.float32)
+
+        monkeypatch.setenv("IRON_LIBROSA_RUST_DEVICE", "cpu")
+        out_cpu = _rust_ext.chroma_project_f32(
+            np.ascontiguousarray(S),
+            np.ascontiguousarray(chromafb),
+        )
+
+        monkeypatch.setenv("IRON_LIBROSA_RUST_DEVICE", "apple-gpu")
+        out_gpu_req = _rust_ext.chroma_project_f32(
+            np.ascontiguousarray(S),
+            np.ascontiguousarray(chromafb),
+        )
+
+        np.testing.assert_allclose(out_cpu, out_gpu_req, rtol=1e-7, atol=1e-7)
+
 
 class TestChromaSTFTDispatch:
     """Public chroma_stft dispatch tests."""

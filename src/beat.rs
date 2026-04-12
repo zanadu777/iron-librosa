@@ -3,6 +3,8 @@ use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use crate::backend::{resolved_rust_device, RustDevice};
+
 fn validate_shapes(n: usize, fpb_len: usize) -> PyResult<()> {
     if n == 0 {
         return Ok(());
@@ -182,6 +184,22 @@ pub fn beat_track_dp_f32<'py>(
     frames_per_beat: PyReadonlyArray1<'py, f32>,
     tightness: f64,
 ) -> PyResult<(Bound<'py, PyArray1<i32>>, Bound<'py, PyArray1<f32>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => beat_track_dp_f32_cpu(py, localscore, frames_per_beat, tightness),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => beat_track_dp_f32_cpu(py, localscore, frames_per_beat, tightness),
+        RustDevice::Auto => beat_track_dp_f32_cpu(py, localscore, frames_per_beat, tightness),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => beat_track_dp_f32_cpu(py, localscore, frames_per_beat, tightness),
+    }
+}
+
+fn beat_track_dp_f32_cpu<'py>(
+    py: Python<'py>,
+    localscore: PyReadonlyArray1<'py, f32>,
+    frames_per_beat: PyReadonlyArray1<'py, f32>,
+    tightness: f64,
+) -> PyResult<(Bound<'py, PyArray1<i32>>, Bound<'py, PyArray1<f32>>)> {
     let (backlink, cumscore) = beat_track_dp_impl_f32(
         localscore.as_array(),
         frames_per_beat.as_array(),
@@ -195,6 +213,22 @@ pub fn beat_track_dp_f32<'py>(
 
 #[pyfunction]
 pub fn beat_track_dp_f64<'py>(
+    py: Python<'py>,
+    localscore: PyReadonlyArray1<'py, f64>,
+    frames_per_beat: PyReadonlyArray1<'py, f64>,
+    tightness: f64,
+) -> PyResult<(Bound<'py, PyArray1<i32>>, Bound<'py, PyArray1<f64>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => beat_track_dp_f64_cpu(py, localscore, frames_per_beat, tightness),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => beat_track_dp_f64_cpu(py, localscore, frames_per_beat, tightness),
+        RustDevice::Auto => beat_track_dp_f64_cpu(py, localscore, frames_per_beat, tightness),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => beat_track_dp_f64_cpu(py, localscore, frames_per_beat, tightness),
+    }
+}
+
+fn beat_track_dp_f64_cpu<'py>(
     py: Python<'py>,
     localscore: PyReadonlyArray1<'py, f64>,
     frames_per_beat: PyReadonlyArray1<'py, f64>,

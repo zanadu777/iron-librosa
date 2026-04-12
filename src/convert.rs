@@ -12,6 +12,8 @@ use ndarray::Array1;
 use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+use crate::backend::{resolved_rust_device, RustDevice};
+
 // ---------------------------------------------------------------------------
 // hz_to_mel
 // ---------------------------------------------------------------------------
@@ -28,6 +30,21 @@ use pyo3::prelude::*;
 #[pyfunction]
 #[pyo3(signature = (frequencies, *, htk = false))]
 pub fn hz_to_mel<'py>(
+    py: Python<'py>,
+    frequencies: PyReadonlyArray1<'py, f64>,
+    htk: bool,
+) -> Bound<'py, PyArray1<f64>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => hz_to_mel_cpu(py, frequencies, htk),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => hz_to_mel_cpu(py, frequencies, htk),
+        RustDevice::Auto => hz_to_mel_cpu(py, frequencies, htk),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => hz_to_mel_cpu(py, frequencies, htk),
+    }
+}
+
+fn hz_to_mel_cpu<'py>(
     py: Python<'py>,
     frequencies: PyReadonlyArray1<'py, f64>,
     htk: bool,
@@ -74,6 +91,21 @@ pub fn mel_to_hz<'py>(
     mels: PyReadonlyArray1<'py, f64>,
     htk: bool,
 ) -> Bound<'py, PyArray1<f64>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => mel_to_hz_cpu(py, mels, htk),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => mel_to_hz_cpu(py, mels, htk),
+        RustDevice::Auto => mel_to_hz_cpu(py, mels, htk),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => mel_to_hz_cpu(py, mels, htk),
+    }
+}
+
+fn mel_to_hz_cpu<'py>(
+    py: Python<'py>,
+    mels: PyReadonlyArray1<'py, f64>,
+    htk: bool,
+) -> Bound<'py, PyArray1<f64>> {
     let mel_arr = mels.as_array();
 
     let freqs: Array1<f64> = if htk {
@@ -98,10 +130,3 @@ pub fn mel_to_hz<'py>(
 
     freqs.into_pyarray_bound(py)
 }
-
-
-
-
-
-
-

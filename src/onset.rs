@@ -3,6 +3,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
+use crate::backend::{resolved_rust_device, RustDevice};
+
 fn reflect_index(mut idx: isize, n: usize) -> usize {
     if n <= 1 {
         return 0;
@@ -108,6 +110,21 @@ pub fn onset_flux_mean_f32<'py>(
     s: PyReadonlyArray2<'py, f32>,
     lag: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => onset_flux_mean_f32_cpu(py, s, lag),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => onset_flux_mean_f32_cpu(py, s, lag),
+        RustDevice::Auto => onset_flux_mean_f32_cpu(py, s, lag),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => onset_flux_mean_f32_cpu(py, s, lag),
+    }
+}
+
+fn onset_flux_mean_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    lag: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let s = s.as_array();
     let out = onset_flux_mean_ref_impl(s, s, lag)?;
     Ok(out.into_pyarray_bound(py))
@@ -121,6 +138,22 @@ pub fn onset_flux_mean_ref_f32<'py>(
     ref_s: PyReadonlyArray2<'py, f32>,
     lag: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => onset_flux_mean_ref_f32_cpu(py, s, ref_s, lag),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => onset_flux_mean_ref_f32_cpu(py, s, ref_s, lag),
+        RustDevice::Auto => onset_flux_mean_ref_f32_cpu(py, s, ref_s, lag),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => onset_flux_mean_ref_f32_cpu(py, s, ref_s, lag),
+    }
+}
+
+fn onset_flux_mean_ref_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    ref_s: PyReadonlyArray2<'py, f32>,
+    lag: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let out = onset_flux_mean_ref_impl(s.as_array(), ref_s.as_array(), lag)?;
     Ok(out.into_pyarray_bound(py))
 }
@@ -128,6 +161,21 @@ pub fn onset_flux_mean_ref_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, lag = 1))]
 pub fn onset_flux_mean_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    lag: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => onset_flux_mean_f64_cpu(py, s, lag),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => onset_flux_mean_f64_cpu(py, s, lag),
+        RustDevice::Auto => onset_flux_mean_f64_cpu(py, s, lag),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => onset_flux_mean_f64_cpu(py, s, lag),
+    }
+}
+
+fn onset_flux_mean_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     lag: usize,
@@ -145,6 +193,22 @@ pub fn onset_flux_mean_ref_f64<'py>(
     ref_s: PyReadonlyArray2<'py, f64>,
     lag: usize,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => onset_flux_mean_ref_f64_cpu(py, s, ref_s, lag),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => onset_flux_mean_ref_f64_cpu(py, s, ref_s, lag),
+        RustDevice::Auto => onset_flux_mean_ref_f64_cpu(py, s, ref_s, lag),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => onset_flux_mean_ref_f64_cpu(py, s, ref_s, lag),
+    }
+}
+
+fn onset_flux_mean_ref_f64_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    ref_s: PyReadonlyArray2<'py, f64>,
+    lag: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let out = onset_flux_mean_ref_impl_f64(s.as_array(), ref_s.as_array(), lag)?;
     Ok(out.into_pyarray_bound(py))
 }
@@ -152,6 +216,22 @@ pub fn onset_flux_mean_ref_f64<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, lag = 1, max_size = 3))]
 pub fn onset_flux_mean_maxfilter_f32<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    lag: usize,
+    max_size: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => onset_flux_mean_maxfilter_f32_cpu(py, s, lag, max_size),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => onset_flux_mean_maxfilter_f32_cpu(py, s, lag, max_size),
+        RustDevice::Auto => onset_flux_mean_maxfilter_f32_cpu(py, s, lag, max_size),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => onset_flux_mean_maxfilter_f32_cpu(py, s, lag, max_size),
+    }
+}
+
+fn onset_flux_mean_maxfilter_f32_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f32>,
     lag: usize,
@@ -206,6 +286,22 @@ pub fn onset_flux_mean_maxfilter_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, lag = 1, max_size = 3))]
 pub fn onset_flux_mean_maxfilter_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    lag: usize,
+    max_size: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => onset_flux_mean_maxfilter_f64_cpu(py, s, lag, max_size),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => onset_flux_mean_maxfilter_f64_cpu(py, s, lag, max_size),
+        RustDevice::Auto => onset_flux_mean_maxfilter_f64_cpu(py, s, lag, max_size),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => onset_flux_mean_maxfilter_f64_cpu(py, s, lag, max_size),
+    }
+}
+
+fn onset_flux_mean_maxfilter_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     lag: usize,
@@ -281,18 +377,40 @@ fn onset_flux_median_ref_impl_f32(
     }
     let medians: Vec<f32> = (0..out_frames)
         .into_par_iter()
-        .map(|t| {
-            let mut flux = vec![0.0f32; n_bins];
-            for f in 0..n_bins {
-                let diff = s[(f, t + lag)] - ref_s[(f, t)];
-                flux[f] = diff.max(0.0);
-            }
-            flux.sort_unstable_by(|a, b| {
-                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-            });
-            let mid = n_bins / 2;
-            if n_bins % 2 == 0 { (flux[mid - 1] + flux[mid]) * 0.5 } else { flux[mid] }
-        })
+        .map_init(
+            || vec![0.0f32; n_bins],
+            |flux, t| {
+                if flux.len() != n_bins {
+                    flux.resize(n_bins, 0.0);
+                }
+                for f in 0..n_bins {
+                    let diff = s[(f, t + lag)] - ref_s[(f, t)];
+                    flux[f] = if diff.is_nan() { f32::NAN } else { diff.max(0.0) };
+                }
+
+                if flux.iter().any(|v| v.is_nan()) {
+                    return f32::NAN;
+                }
+
+                let cmp = |a: &f32, b: &f32| {
+                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                };
+                let mid = n_bins / 2;
+
+                if n_bins % 2 == 1 {
+                    let (_, median, _) = flux.select_nth_unstable_by(mid, cmp);
+                    *median
+                } else {
+                    let (_, lower, right) = flux.select_nth_unstable_by(mid - 1, cmp);
+                    let upper = right
+                        .iter()
+                        .min_by(|a, b| cmp(a, b))
+                        .copied()
+                        .unwrap_or(*lower);
+                    (*lower + upper) * 0.5
+                }
+            },
+        )
         .collect();
     let mut out = ndarray::Array2::<f32>::zeros((1, out_frames));
     for (t, &v) in medians.iter().enumerate() {
@@ -322,18 +440,40 @@ fn onset_flux_median_ref_impl_f64(
     }
     let medians: Vec<f64> = (0..out_frames)
         .into_par_iter()
-        .map(|t| {
-            let mut flux = vec![0.0f64; n_bins];
-            for f in 0..n_bins {
-                let diff = s[(f, t + lag)] - ref_s[(f, t)];
-                flux[f] = diff.max(0.0);
-            }
-            flux.sort_unstable_by(|a, b| {
-                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-            });
-            let mid = n_bins / 2;
-            if n_bins % 2 == 0 { (flux[mid - 1] + flux[mid]) * 0.5 } else { flux[mid] }
-        })
+        .map_init(
+            || vec![0.0f64; n_bins],
+            |flux, t| {
+                if flux.len() != n_bins {
+                    flux.resize(n_bins, 0.0);
+                }
+                for f in 0..n_bins {
+                    let diff = s[(f, t + lag)] - ref_s[(f, t)];
+                    flux[f] = if diff.is_nan() { f64::NAN } else { diff.max(0.0) };
+                }
+
+                if flux.iter().any(|v| v.is_nan()) {
+                    return f64::NAN;
+                }
+
+                let cmp = |a: &f64, b: &f64| {
+                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                };
+                let mid = n_bins / 2;
+
+                if n_bins % 2 == 1 {
+                    let (_, median, _) = flux.select_nth_unstable_by(mid, cmp);
+                    *median
+                } else {
+                    let (_, lower, right) = flux.select_nth_unstable_by(mid - 1, cmp);
+                    let upper = right
+                        .iter()
+                        .min_by(|a, b| cmp(a, b))
+                        .copied()
+                        .unwrap_or(*lower);
+                    (*lower + upper) * 0.5
+                }
+            },
+        )
         .collect();
     let mut out = ndarray::Array2::<f64>::zeros((1, out_frames));
     for (t, &v) in medians.iter().enumerate() {
@@ -350,6 +490,22 @@ pub fn onset_flux_median_ref_f32<'py>(
     ref_s: PyReadonlyArray2<'py, f32>,
     lag: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => onset_flux_median_ref_f32_cpu(py, s, ref_s, lag),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => onset_flux_median_ref_f32_cpu(py, s, ref_s, lag),
+        RustDevice::Auto => onset_flux_median_ref_f32_cpu(py, s, ref_s, lag),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => onset_flux_median_ref_f32_cpu(py, s, ref_s, lag),
+    }
+}
+
+fn onset_flux_median_ref_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    ref_s: PyReadonlyArray2<'py, f32>,
+    lag: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let out = onset_flux_median_ref_impl_f32(s.as_array(), ref_s.as_array(), lag)?;
     Ok(out.into_pyarray_bound(py))
 }
@@ -357,6 +513,22 @@ pub fn onset_flux_median_ref_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, ref_s, lag = 1))]
 pub fn onset_flux_median_ref_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    ref_s: PyReadonlyArray2<'py, f64>,
+    lag: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => onset_flux_median_ref_f64_cpu(py, s, ref_s, lag),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => onset_flux_median_ref_f64_cpu(py, s, ref_s, lag),
+        RustDevice::Auto => onset_flux_median_ref_f64_cpu(py, s, ref_s, lag),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => onset_flux_median_ref_f64_cpu(py, s, ref_s, lag),
+    }
+}
+
+fn onset_flux_median_ref_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     ref_s: PyReadonlyArray2<'py, f64>,

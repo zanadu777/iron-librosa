@@ -14,6 +14,49 @@ use rustfft::FftPlanner;
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use crate::backend::{requested_rust_device, resolved_rust_device, RustDevice};
+
+/// Workload size threshold for GPU FFT dispatch in Auto mode.
+/// When n_frames * n_fft * log2(n_fft) >= this value, GPU dispatch is used.
+fn fft_gpu_work_threshold() -> usize {
+    static THRESHOLD: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *THRESHOLD.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_FFT_GPU_WORK_THRESHOLD")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(100_000_000)
+    })
+}
+
+fn fft_timing_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_FFT_TIMING")
+            .ok()
+            .map(|s| {
+                matches!(
+                    s.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Optional minimum frame count for iSTFT GPU dispatch.
+/// When set (>0), workloads with fewer frames run on CPU even on apple-gpu mode.
+/// Phase 19 A/B testing showed min_frames=200 reduces regressions and improves score (0.887 vs 0.767).
+/// Default changed to 200 in Phase 20 based on empirical optimization.
+fn fft_gpu_min_frames() -> usize {
+    static MIN_FRAMES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN_FRAMES.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_FFT_GPU_MIN_FRAMES")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(200)  // Phase 20: Changed from 0 to 200 (Phase 19 A/B winner)
+    })
+}
+
 // ── per-thread state ──────────────────────────────────────────────────────────
 // Thread-local FFT plan and scratch buffers for f32 and f64
 
@@ -70,6 +113,9 @@ pub fn istft_f32<'py>(
     win_length: Option<usize>,
     window: Option<PyReadonlyArray1<'py, f32>>,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    let timing_enabled = fft_timing_enabled();
+    let total_start = std::time::Instant::now();
+
     if n_fft < 2 {
         return Err(PyValueError::new_err("n_fft must be >= 2"));
     }
@@ -113,36 +159,99 @@ pub fn istft_f32<'py>(
     // Compute expected output length (assuming center=False, no trimming)
     let expected_len = n_fft + hop_length * (n_frames.saturating_sub(1));
 
-    // Allocate output and overlap buffer
-    let mut y = Array1::<f32>::zeros(expected_len);
-    let mut overlap_buf = Array1::<f32>::zeros(expected_len);
+    // Allocate overlap-add numerator and normalization denominator.
+    // These are later fused into the final output with the same thresholding as before.
+    let mut overlap_buf = vec![0.0f32; expected_len];
+    let mut norm_buf = vec![0.0f32; expected_len];
+    let window_sq: Vec<f32> = window_vec.iter().map(|w| w * w).collect();
+
+    // Dispatch to GPU (if requested) or CPU per-frame IFFT.
+    let requested_device = requested_rust_device();
+    let resolved_device = resolved_rust_device();
+    let work_size = n_frames
+        .saturating_mul(n_fft)
+        .saturating_mul((n_fft as f32).log2() as usize);
+    let use_gpu = match requested_device {
+        RustDevice::AppleGpu => {
+            resolved_device == RustDevice::AppleGpu && n_frames >= fft_gpu_min_frames()
+        }
+        RustDevice::Auto => {
+            resolved_device == RustDevice::AppleGpu
+                && work_size >= fft_gpu_work_threshold()
+                && n_frames >= fft_gpu_min_frames()
+        }
+        RustDevice::Cpu => false,
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => false,
+    };
+
+    let mut ifft_ms = 0.0f64;
+    let mut overlap_add_ms = 0.0f64;
+    let mut ifft_frame_cpu = vec![0.0f32; n_fft];
+
+    let mut ifft_gpu_batch: Option<Vec<Complex<f32>>> = None;
+    if use_gpu {
+        let ifft_start = std::time::Instant::now();
+        ifft_gpu_batch = Some(inverse_fft_f32_gpu_batch_complex(&stft_slice, n_fft));
+        ifft_ms += ifft_start.elapsed().as_secs_f64() * 1000.0;
+    }
 
     // Process each frame via IFFT
     for frame_idx in 0..n_frames {
-        // Extract this frame's complex spectrum
-        let frame = stft_slice.slice(s![.., frame_idx]);
-
-        // Perform inverse FFT (in-place in buffer)
-        let ifft_frame = inverse_fft_f32(py, &frame, n_fft)?;
+        if !use_gpu {
+            let frame = stft_slice.slice(s![.., frame_idx]);
+            let ifft_start = std::time::Instant::now();
+            inverse_fft_f32_into(py, &frame, n_fft, &mut ifft_frame_cpu)?;
+            ifft_ms += ifft_start.elapsed().as_secs_f64() * 1000.0;
+        }
 
         // Window and overlap-add
+        let overlap_start = std::time::Instant::now();
         let start_sample = frame_idx * hop_length;
-        for (i, sample) in ifft_frame.iter().enumerate() {
-            if start_sample + i < expected_len {
-                overlap_buf[start_sample + i] += sample * window_vec[i];
+        if let Some(gpu_batch) = ifft_gpu_batch.as_ref() {
+            let frame_off = frame_idx * n_fft;
+            let scale = 1.0f32 / n_fft as f32;
+            for i in 0..n_fft {
+                let idx = start_sample + i;
+                overlap_buf[idx] += gpu_batch[frame_off + i].re * scale * window_vec[i];
+                norm_buf[idx] += window_sq[i];
+            }
+        } else {
+            for (i, sample) in ifft_frame_cpu.iter().enumerate() {
+                let idx = start_sample + i;
+                overlap_buf[idx] += sample * window_vec[i];
+                norm_buf[idx] += window_sq[i];
             }
         }
+        overlap_add_ms += overlap_start.elapsed().as_secs_f64() * 1000.0;
     }
 
     // Normalize by window sum-of-squares
-    let window_sum_sq = compute_window_sumsquare_f32(&window_vec, n_frames, hop_length);
+    let normalize_start = std::time::Instant::now();
     for i in 0..expected_len {
-        if window_sum_sq[i] > 1e-8 {
-            y[i] = overlap_buf[i] / window_sum_sq[i];
+        if norm_buf[i] > 1e-8 {
+            overlap_buf[i] /= norm_buf[i];
         }
     }
+    let normalize_ms = normalize_start.elapsed().as_secs_f64() * 1000.0;
 
-    Ok(y.into_pyarray_bound(py).to_owned())
+    if timing_enabled {
+        eprintln!(
+            "[iron-librosa][istft_f32] mode={} requested={:?} resolved={:?} n_fft={} n_frames={} work={} total_ms={:.3} ifft_ms={:.3} overlap_add_ms={:.3} normalize_ms={:.3}",
+            if use_gpu { "gpu" } else { "cpu" },
+            requested_device,
+            resolved_device,
+            n_fft,
+            n_frames,
+            work_size,
+            total_start.elapsed().as_secs_f64() * 1000.0,
+            ifft_ms,
+            overlap_add_ms,
+            normalize_ms,
+        );
+    }
+
+    Ok(Array1::from_vec(overlap_buf).into_pyarray_bound(py).to_owned())
 }
 
 /// Compute inverse STFT from complex spectrogram (f64 precision).
@@ -196,29 +305,31 @@ pub fn istft_f64<'py>(
 
     let expected_len = n_fft + hop_length * (n_frames.saturating_sub(1));
 
-    let mut y = Array1::<f64>::zeros(expected_len);
-    let mut overlap_buf = Array1::<f64>::zeros(expected_len);
+    let mut overlap_buf = vec![0.0f64; expected_len];
+    let mut norm_buf = vec![0.0f64; expected_len];
+    let window_sq: Vec<f64> = window_vec.iter().map(|w| w * w).collect();
 
+    // Reuse one frame buffer to avoid per-frame time-domain allocations.
+    let mut ifft_frame = vec![0.0f64; n_fft];
     for frame_idx in 0..n_frames {
         let frame = stft_slice.slice(s![.., frame_idx]);
-        let ifft_frame = inverse_fft_f64(py, &frame, n_fft)?;
+        inverse_fft_f64_into(py, &frame, n_fft, &mut ifft_frame)?;
 
         let start_sample = frame_idx * hop_length;
         for (i, sample) in ifft_frame.iter().enumerate() {
-            if start_sample + i < expected_len {
-                overlap_buf[start_sample + i] += sample * window_vec[i];
-            }
+            let idx = start_sample + i;
+            overlap_buf[idx] += sample * window_vec[i];
+            norm_buf[idx] += window_sq[i];
         }
     }
 
-    let window_sum_sq = compute_window_sumsquare_f64(&window_vec, n_frames, hop_length);
     for i in 0..expected_len {
-        if window_sum_sq[i] > 1e-10 {
-            y[i] = overlap_buf[i] / window_sum_sq[i];
+        if norm_buf[i] > 1e-10 {
+            overlap_buf[i] /= norm_buf[i];
         }
     }
 
-    Ok(y.into_pyarray_bound(py).to_owned())
+    Ok(Array1::from_vec(overlap_buf).into_pyarray_bound(py).to_owned())
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -238,38 +349,54 @@ fn hann_window_f64(n: usize) -> Vec<f64> {
         .collect()
 }
 
-/// Inverse FFT for f32, using thread-local cached planner
-fn inverse_fft_f32(
+/// Inverse FFT for f32 using Metal GPU with CPU fallback.
+/// Mirrors negative frequencies for all frames and runs batched inverse FFT.
+/// Returns complex time-domain frames (unscaled, rustfft inverse semantics).
+fn inverse_fft_f32_gpu_batch_complex(
+    stft_matrix: &ndarray::ArrayView2<Complex<f32>>,
+    n_fft: usize,
+) -> Vec<Complex<f32>> {
+    let n_bins = stft_matrix.shape()[0];
+    let n_frames = stft_matrix.shape()[1];
+    let mut full_spectrum = vec![Complex::new(0.0f32, 0.0f32); n_frames * n_fft];
+
+    for frame_idx in 0..n_frames {
+        let frame_off = frame_idx * n_fft;
+        for i in 0..n_bins {
+            full_spectrum[frame_off + i] = stft_matrix[(i, frame_idx)];
+        }
+
+        if n_fft % 2 == 0 {
+            for i in 1..n_fft / 2 {
+                full_spectrum[frame_off + (n_fft - i)] = full_spectrum[frame_off + i].conj();
+            }
+        } else {
+            for i in 1..(n_fft + 1) / 2 {
+                full_spectrum[frame_off + (n_fft - i)] = full_spectrum[frame_off + i].conj();
+            }
+        }
+    }
+
+    // Try batched Metal GPU inverse FFT; fall back to CPU on any failure.
+    let _ = crate::metal_fft::fft_inverse_batched_chunked_with_fallback(
+        &mut full_spectrum,
+        n_fft,
+        n_frames,
+    );
+
+    full_spectrum
+}
+
+fn inverse_fft_f32_into(
     _py: Python,
     stft_frame: &ndarray::ArrayView1<Complex<f32>>,
     n_fft: usize,
-) -> PyResult<Vec<f32>> {
-    let spectrum: Vec<Complex<f32>> = stft_frame.to_vec();
-
-    // Mirror the negative frequencies for real-valued output
-    // STFT only gives positive frequencies up to n_fft//2
-    // We need to reconstruct full spectrum for inverse FFT
-    let mut full_spectrum = vec![Complex::new(0.0, 0.0); n_fft];
-
-    // Copy positive frequencies
-    for i in 0..spectrum.len() {
-        full_spectrum[i] = spectrum[i];
+    out: &mut [f32],
+) -> PyResult<()> {
+    if out.len() < n_fft {
+        return Err(PyValueError::new_err("output buffer too small for inverse_fft_f32_into"));
     }
 
-    // Mirror negative frequencies (complex conjugate)
-    if n_fft % 2 == 0 {
-        // Even n_fft: Nyquist is at index n_fft//2 and is real
-        for i in 1..n_fft / 2 {
-            full_spectrum[n_fft - i] = full_spectrum[i].conj();
-        }
-    } else {
-        // Odd n_fft
-        for i in 1..(n_fft + 1) / 2 {
-            full_spectrum[n_fft - i] = full_spectrum[i].conj();
-        }
-    }
-
-    // Get or build FFT plan for this thread
     let fft = TL_ISTFT_PLAN_F32.with(|cell| {
         let mut p = cell.borrow_mut();
         if p.last_n_fft != n_fft || p.fft.is_none() {
@@ -279,54 +406,52 @@ fn inverse_fft_f32(
         p.fft.clone().unwrap()
     });
 
-    // Prepare buffers
-    let mut buf = TL_ISTFT_BUF_F32.with(|cell| {
-        let mut b = cell.borrow_mut();
-        b.clear();
-        b.extend_from_slice(&full_spectrum);
-        if b.len() < n_fft {
-            b.resize(n_fft, Complex::new(0.0, 0.0));
+    let scratch_len = fft.get_inplace_scratch_len();
+    TL_ISTFT_BUF_F32.with(|bc| {
+        let mut buf = bc.borrow_mut();
+        if buf.len() != n_fft {
+            buf.resize(n_fft, Complex::new(0.0, 0.0));
         }
-        b.to_vec()
+        buf.fill(Complex::new(0.0, 0.0));
+
+        for i in 0..stft_frame.len() {
+            buf[i] = stft_frame[i];
+        }
+        if n_fft % 2 == 0 {
+            for i in 1..n_fft / 2 {
+                buf[n_fft - i] = buf[i].conj();
+            }
+        } else {
+            for i in 1..(n_fft + 1) / 2 {
+                buf[n_fft - i] = buf[i].conj();
+            }
+        }
+
+        TL_ISTFT_SCRATCH_F32.with(|sc| {
+            let mut scratch = sc.borrow_mut();
+            if scratch.len() < scratch_len {
+                scratch.resize(scratch_len, Complex::new(0.0, 0.0));
+            }
+            fft.process_with_scratch(&mut buf[..], &mut scratch[..scratch_len]);
+        });
+
+        let scale = 1.0f32 / n_fft as f32;
+        for i in 0..n_fft {
+            out[i] = buf[i].re * scale;
+        }
     });
 
-    let mut scratch = TL_ISTFT_SCRATCH_F32.with(|cell| {
-        let mut s = cell.borrow_mut();
-        s.resize(fft.get_inplace_scratch_len(), Complex::new(0.0, 0.0));
-        s.clone()
-    });
-
-    // Execute inverse FFT
-    fft.process_with_scratch(&mut buf, &mut scratch);
-
-    // Convert complex to real by taking real part, scaled by 1/n_fft
-    let result: Vec<f32> = buf.iter().map(|c| c.re / n_fft as f32).collect();
-
-    Ok(result)
+    Ok(())
 }
 
-/// Inverse FFT for f64
-fn inverse_fft_f64(
+fn inverse_fft_f64_into(
     _py: Python,
     stft_frame: &ndarray::ArrayView1<Complex<f64>>,
     n_fft: usize,
-) -> PyResult<Vec<f64>> {
-    let spectrum: Vec<Complex<f64>> = stft_frame.to_vec();
-
-    let mut full_spectrum = vec![Complex::new(0.0, 0.0); n_fft];
-
-    for i in 0..spectrum.len() {
-        full_spectrum[i] = spectrum[i];
-    }
-
-    if n_fft % 2 == 0 {
-        for i in 1..n_fft / 2 {
-            full_spectrum[n_fft - i] = full_spectrum[i].conj();
-        }
-    } else {
-        for i in 1..(n_fft + 1) / 2 {
-            full_spectrum[n_fft - i] = full_spectrum[i].conj();
-        }
+    out: &mut [f64],
+) -> PyResult<()> {
+    if out.len() < n_fft {
+        return Err(PyValueError::new_err("output buffer too small for inverse_fft_f64_into"));
     }
 
     let fft = TL_ISTFT_PLAN_F64.with(|cell| {
@@ -338,73 +463,44 @@ fn inverse_fft_f64(
         p.fft.clone().unwrap()
     });
 
-    let mut buf = TL_ISTFT_BUF_F64.with(|cell| {
-        let mut b = cell.borrow_mut();
-        b.clear();
-        b.extend_from_slice(&full_spectrum);
-        if b.len() < n_fft {
-            b.resize(n_fft, Complex::new(0.0, 0.0));
+    let scratch_len = fft.get_inplace_scratch_len();
+    TL_ISTFT_BUF_F64.with(|bc| {
+        let mut buf = bc.borrow_mut();
+        if buf.len() != n_fft {
+            buf.resize(n_fft, Complex::new(0.0, 0.0));
         }
-        b.to_vec()
-    });
+        buf.fill(Complex::new(0.0, 0.0));
 
-    let mut scratch = TL_ISTFT_SCRATCH_F64.with(|cell| {
-        let mut s = cell.borrow_mut();
-        s.resize(fft.get_inplace_scratch_len(), Complex::new(0.0, 0.0));
-        s.clone()
-    });
-
-    fft.process_with_scratch(&mut buf, &mut scratch);
-
-    let result: Vec<f64> = buf.iter().map(|c| c.re / n_fft as f64).collect();
-
-    Ok(result)
-}
-
-/// Compute window sum-of-squares for normalization in ISTFT
-fn compute_window_sumsquare_f32(
-    window: &[f32],
-    n_frames: usize,
-    hop_length: usize,
-) -> Vec<f32> {
-    let n_fft = window.len();
-    let total_len = n_fft + hop_length * (n_frames.saturating_sub(1));
-
-    let mut window_sq = vec![0.0f32; total_len];
-
-    for frame_idx in 0..n_frames {
-        let start = frame_idx * hop_length;
-        for (i, &w) in window.iter().enumerate() {
-            if start + i < total_len {
-                window_sq[start + i] += w * w;
+        for i in 0..stft_frame.len() {
+            buf[i] = stft_frame[i];
+        }
+        if n_fft % 2 == 0 {
+            for i in 1..n_fft / 2 {
+                buf[n_fft - i] = buf[i].conj();
+            }
+        } else {
+            for i in 1..(n_fft + 1) / 2 {
+                buf[n_fft - i] = buf[i].conj();
             }
         }
-    }
 
-    window_sq
-}
-
-fn compute_window_sumsquare_f64(
-    window: &[f64],
-    n_frames: usize,
-    hop_length: usize,
-) -> Vec<f64> {
-    let n_fft = window.len();
-    let total_len = n_fft + hop_length * (n_frames.saturating_sub(1));
-
-    let mut window_sq = vec![0.0f64; total_len];
-
-    for frame_idx in 0..n_frames {
-        let start = frame_idx * hop_length;
-        for (i, &w) in window.iter().enumerate() {
-            if start + i < total_len {
-                window_sq[start + i] += w * w;
+        TL_ISTFT_SCRATCH_F64.with(|sc| {
+            let mut scratch = sc.borrow_mut();
+            if scratch.len() < scratch_len {
+                scratch.resize(scratch_len, Complex::new(0.0, 0.0));
             }
-        }
-    }
+            fft.process_with_scratch(&mut buf[..], &mut scratch[..scratch_len]);
+        });
 
-    window_sq
+        let scale = 1.0f64 / n_fft as f64;
+        for i in 0..n_fft {
+            out[i] = buf[i].re * scale;
+        }
+    });
+
+    Ok(())
 }
+
 
 
 

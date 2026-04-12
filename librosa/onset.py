@@ -604,14 +604,12 @@ def onset_strength_multi(
     )
 
     # Separate eligibility check for median aggregate (Phase 15 seam).
-    # Only handles the simple max_size==1 / no external ref case for now.
-    _rust_onset_median_eligible = (
+    _rust_onset_median_base = (
         RUST_AVAILABLE
         and S.ndim == 2
         and S.dtype in (np.float32, np.float64)
         and channels is None
         and aggregate is np.median
-        and ref is None
         and max_size == 1
     )
 
@@ -669,10 +667,20 @@ def onset_strength_multi(
                 np.ascontiguousarray(S), int(lag)
             )
 
-    # Phase 15: Rust median path (max_size=1, no external ref).
-    if onset_env is None and _rust_onset_median_eligible and hasattr(_rust_ext, _onset_median_ref_name):
+    # Phase 15: Rust median path (max_size=1) with internal or explicit reference.
+    if (
+        onset_env is None
+        and _rust_onset_median_base
+        and ref is not None
+        and ref.ndim == 2
+        and ref.shape == S.shape
+        and ref.dtype == S.dtype
+        and hasattr(_rust_ext, _onset_median_ref_name)
+    ):
         S_c = np.ascontiguousarray(S)
-        onset_env = getattr(_rust_ext, _onset_median_ref_name)(S_c, S_c, int(lag))
+        onset_env = getattr(_rust_ext, _onset_median_ref_name)(
+            S_c, np.ascontiguousarray(ref), int(lag)
+        )
 
     if onset_env is None:
         assert ref is not None

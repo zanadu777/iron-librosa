@@ -25,7 +25,9 @@ Phase 15 attacked both 49 % bottlenecks.
 ### 1. `onset_flux_median_ref_f32 / f64`  (`src/onset.rs`)
 
 Replaces the `util.sync(np.median)` call inside `onset_strength_multi`
-when `aggregate=np.median` and `max_size=1` (the `beat_track` default).
+when `aggregate=np.median`, `max_size=1`, and `channels is None`.
+The seam now supports both implicit reference (`ref=None`, internally `ref=S`)
+and explicit `ref` when shape/dtype match `S`.
 
 - Rayon parallel iteration over time frames.
 - Per-frame: collect flux values → `sort_unstable_by` → take middle element.
@@ -45,7 +47,7 @@ for 2-D (mono) input.
 
 | File | Change |
 |---|---|
-| `librosa/onset.py` | `_rust_onset_median_eligible` flag; new dispatch branch for `onset_flux_median_ref_*` |
+| `librosa/onset.py` | `_rust_onset_median_base` guard; median dispatch for implicit/explicit `ref` with strict shape/dtype checks |
 | `librosa/feature/rhythm.py` | Added `_rust_bridge` import; `tempogram_ac_*` dispatch in `tempogram()` |
 
 ---

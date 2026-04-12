@@ -18,6 +18,8 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReado
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
+use crate::backend::{resolved_rust_device, RustDevice};
+
 /// Minimum element count (n_bins × n_frames) before switching to parallel path.
 const PAR_THRESHOLD: usize = 200_000; // ~800 KB for f32 / ~1.6 MB for f64
 
@@ -92,6 +94,21 @@ pub fn rms_spectrogram_f32<'py>(
     s: PyReadonlyArray2<'py, f32>,
     frame_length: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => rms_spectrogram_f32_cpu(py, s, frame_length),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => rms_spectrogram_f32_cpu(py, s, frame_length),
+        RustDevice::Auto => rms_spectrogram_f32_cpu(py, s, frame_length),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => rms_spectrogram_f32_cpu(py, s, frame_length),
+    }
+}
+
+fn rms_spectrogram_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    frame_length: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let s_view = s.as_array();
     let n_bins = s_view.shape()[0];
     let n_frames = s_view.shape()[1];
@@ -143,6 +160,21 @@ pub fn rms_spectrogram_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, frame_length))]
 pub fn rms_spectrogram_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    frame_length: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => rms_spectrogram_f64_cpu(py, s, frame_length),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => rms_spectrogram_f64_cpu(py, s, frame_length),
+        RustDevice::Auto => rms_spectrogram_f64_cpu(py, s, frame_length),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => rms_spectrogram_f64_cpu(py, s, frame_length),
+    }
+}
+
+fn rms_spectrogram_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     frame_length: usize,
@@ -202,6 +234,20 @@ pub fn rms_spectrogram_f64<'py>(
 #[pyfunction]
 #[pyo3(signature = (x))]
 pub fn rms_time_f32<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'py, f32>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => rms_time_f32_cpu(py, x),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => rms_time_f32_cpu(py, x),
+        RustDevice::Auto => rms_time_f32_cpu(py, x),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => rms_time_f32_cpu(py, x),
+    }
+}
+
+fn rms_time_f32_cpu<'py>(
     py: Python<'py>,
     x: PyReadonlyArray2<'py, f32>,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
@@ -298,6 +344,20 @@ pub fn rms_time_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (x))]
 pub fn rms_time_f64<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => rms_time_f64_cpu(py, x),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => rms_time_f64_cpu(py, x),
+        RustDevice::Auto => rms_time_f64_cpu(py, x),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => rms_time_f64_cpu(py, x),
+    }
+}
+
+fn rms_time_f64_cpu<'py>(
     py: Python<'py>,
     x: PyReadonlyArray2<'py, f64>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
@@ -409,6 +469,21 @@ pub fn spectral_centroid_f32<'py>(
     s: PyReadonlyArray2<'py, f32>,
     freq: PyReadonlyArray1<'py, f64>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_centroid_f32_cpu(py, s, freq),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_centroid_f32_cpu(py, s, freq),
+        RustDevice::Auto => spectral_centroid_f32_cpu(py, s, freq),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_centroid_f32_cpu(py, s, freq),
+    }
+}
+
+fn spectral_centroid_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    freq: PyReadonlyArray1<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let s_view = s.as_array();
     let freq_view = freq.as_array();
     let n_bins = s_view.shape()[0];
@@ -496,6 +571,21 @@ pub fn spectral_centroid_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, freq))]
 pub fn spectral_centroid_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    freq: PyReadonlyArray1<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_centroid_f64_cpu(py, s, freq),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_centroid_f64_cpu(py, s, freq),
+        RustDevice::Auto => spectral_centroid_f64_cpu(py, s, freq),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_centroid_f64_cpu(py, s, freq),
+    }
+}
+
+fn spectral_centroid_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     freq: PyReadonlyArray1<'py, f64>,
@@ -591,6 +681,21 @@ pub fn spectral_centroid_variable_freq_f32<'py>(
     s: PyReadonlyArray2<'py, f32>,
     freq: PyReadonlyArray2<'py, f64>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_centroid_variable_freq_f32_cpu(py, s, freq),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_centroid_variable_freq_f32_cpu(py, s, freq),
+        RustDevice::Auto => spectral_centroid_variable_freq_f32_cpu(py, s, freq),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_centroid_variable_freq_f32_cpu(py, s, freq),
+    }
+}
+
+fn spectral_centroid_variable_freq_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    freq: PyReadonlyArray2<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let s_view = s.as_array();
     let freq_view = freq.as_array();
     let n_bins = s_view.shape()[0];
@@ -641,6 +746,21 @@ pub fn spectral_centroid_variable_freq_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, freq))]
 pub fn spectral_centroid_variable_freq_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    freq: PyReadonlyArray2<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_centroid_variable_freq_f64_cpu(py, s, freq),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_centroid_variable_freq_f64_cpu(py, s, freq),
+        RustDevice::Auto => spectral_centroid_variable_freq_f64_cpu(py, s, freq),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_centroid_variable_freq_f64_cpu(py, s, freq),
+    }
+}
+
+fn spectral_centroid_variable_freq_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     freq: PyReadonlyArray2<'py, f64>,
@@ -699,6 +819,22 @@ pub fn spectral_centroid_variable_freq_f64<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, freq, roll_percent))]
 pub fn spectral_rolloff_f32<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    freq: PyReadonlyArray1<'py, f64>,
+    roll_percent: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_rolloff_f32_cpu(py, s, freq, roll_percent),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_rolloff_f32_cpu(py, s, freq, roll_percent),
+        RustDevice::Auto => spectral_rolloff_f32_cpu(py, s, freq, roll_percent),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_rolloff_f32_cpu(py, s, freq, roll_percent),
+    }
+}
+
+fn spectral_rolloff_f32_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f32>,
     freq: PyReadonlyArray1<'py, f64>,
@@ -784,6 +920,22 @@ pub fn spectral_rolloff_f64<'py>(
     freq: PyReadonlyArray1<'py, f64>,
     roll_percent: f64,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_rolloff_f64_cpu(py, s, freq, roll_percent),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_rolloff_f64_cpu(py, s, freq, roll_percent),
+        RustDevice::Auto => spectral_rolloff_f64_cpu(py, s, freq, roll_percent),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_rolloff_f64_cpu(py, s, freq, roll_percent),
+    }
+}
+
+fn spectral_rolloff_f64_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    freq: PyReadonlyArray1<'py, f64>,
+    roll_percent: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     if !(0.0..1.0).contains(&roll_percent) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "roll_percent must lie in the range (0, 1)",
@@ -864,6 +1016,22 @@ pub fn spectral_rolloff_variable_freq_f32<'py>(
     freq: PyReadonlyArray2<'py, f64>,
     roll_percent: f64,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_rolloff_variable_freq_f32_cpu(py, s, freq, roll_percent),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_rolloff_variable_freq_f32_cpu(py, s, freq, roll_percent),
+        RustDevice::Auto => spectral_rolloff_variable_freq_f32_cpu(py, s, freq, roll_percent),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_rolloff_variable_freq_f32_cpu(py, s, freq, roll_percent),
+    }
+}
+
+fn spectral_rolloff_variable_freq_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    freq: PyReadonlyArray2<'py, f64>,
+    roll_percent: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     if !(0.0..1.0).contains(&roll_percent) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "roll_percent must lie in the range (0, 1)",
@@ -936,6 +1104,22 @@ pub fn spectral_rolloff_variable_freq_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, freq, roll_percent))]
 pub fn spectral_rolloff_variable_freq_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    freq: PyReadonlyArray2<'py, f64>,
+    roll_percent: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_rolloff_variable_freq_f64_cpu(py, s, freq, roll_percent),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_rolloff_variable_freq_f64_cpu(py, s, freq, roll_percent),
+        RustDevice::Auto => spectral_rolloff_variable_freq_f64_cpu(py, s, freq, roll_percent),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_rolloff_variable_freq_f64_cpu(py, s, freq, roll_percent),
+    }
+}
+
+fn spectral_rolloff_variable_freq_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     freq: PyReadonlyArray2<'py, f64>,
@@ -1029,6 +1213,23 @@ pub fn power_to_db_f32<'py>(
     amin: f32,
     top_db: Option<f32>,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => power_to_db_f32_cpu(py, S, ref_power, amin, top_db),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => power_to_db_f32_cpu(py, S, ref_power, amin, top_db),
+        RustDevice::Auto => power_to_db_f32_cpu(py, S, ref_power, amin, top_db),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => power_to_db_f32_cpu(py, S, ref_power, amin, top_db),
+    }
+}
+
+fn power_to_db_f32_cpu<'py>(
+    py: Python<'py>,
+    S: PyReadonlyArray1<'py, f32>,
+    ref_power: f32,
+    amin: f32,
+    top_db: Option<f32>,
+) -> PyResult<Bound<'py, PyArray1<f32>>> {
     let S_slice = S.as_slice()?;
 
     // Compute dB with thresholding
@@ -1059,6 +1260,23 @@ pub fn power_to_db_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (S, ref_power = 1.0, amin = 1e-10, top_db = None))]
 pub fn power_to_db_f64<'py>(
+    py: Python<'py>,
+    S: PyReadonlyArray1<'py, f64>,
+    ref_power: f64,
+    amin: f64,
+    top_db: Option<f64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => power_to_db_f64_cpu(py, S, ref_power, amin, top_db),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => power_to_db_f64_cpu(py, S, ref_power, amin, top_db),
+        RustDevice::Auto => power_to_db_f64_cpu(py, S, ref_power, amin, top_db),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => power_to_db_f64_cpu(py, S, ref_power, amin, top_db),
+    }
+}
+
+fn power_to_db_f64_cpu<'py>(
     py: Python<'py>,
     S: PyReadonlyArray1<'py, f64>,
     ref_power: f64,
@@ -1109,6 +1327,23 @@ pub fn amplitude_to_db_f32<'py>(
     amin: f32,
     top_db: Option<f32>,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => amplitude_to_db_f32_cpu(py, A, ref_amplitude, amin, top_db),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => amplitude_to_db_f32_cpu(py, A, ref_amplitude, amin, top_db),
+        RustDevice::Auto => amplitude_to_db_f32_cpu(py, A, ref_amplitude, amin, top_db),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => amplitude_to_db_f32_cpu(py, A, ref_amplitude, amin, top_db),
+    }
+}
+
+fn amplitude_to_db_f32_cpu<'py>(
+    py: Python<'py>,
+    A: PyReadonlyArray1<'py, f32>,
+    ref_amplitude: f32,
+    amin: f32,
+    top_db: Option<f32>,
+) -> PyResult<Bound<'py, PyArray1<f32>>> {
     let A_slice = A.as_slice()?;
 
     let mut result = Vec::with_capacity(A_slice.len());
@@ -1136,6 +1371,23 @@ pub fn amplitude_to_db_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (A, ref_amplitude = 1.0, amin = 1e-5, top_db = None))]
 pub fn amplitude_to_db_f64<'py>(
+    py: Python<'py>,
+    A: PyReadonlyArray1<'py, f64>,
+    ref_amplitude: f64,
+    amin: f64,
+    top_db: Option<f64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => amplitude_to_db_f64_cpu(py, A, ref_amplitude, amin, top_db),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => amplitude_to_db_f64_cpu(py, A, ref_amplitude, amin, top_db),
+        RustDevice::Auto => amplitude_to_db_f64_cpu(py, A, ref_amplitude, amin, top_db),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => amplitude_to_db_f64_cpu(py, A, ref_amplitude, amin, top_db),
+    }
+}
+
+fn amplitude_to_db_f64_cpu<'py>(
     py: Python<'py>,
     A: PyReadonlyArray1<'py, f64>,
     ref_amplitude: f64,
@@ -1175,6 +1427,21 @@ pub fn db_to_power_f32<'py>(
     S_db: PyReadonlyArray1<'py, f32>,
     ref_power: f32,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => db_to_power_f32_cpu(py, S_db, ref_power),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => db_to_power_f32_cpu(py, S_db, ref_power),
+        RustDevice::Auto => db_to_power_f32_cpu(py, S_db, ref_power),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => db_to_power_f32_cpu(py, S_db, ref_power),
+    }
+}
+
+fn db_to_power_f32_cpu<'py>(
+    py: Python<'py>,
+    S_db: PyReadonlyArray1<'py, f32>,
+    ref_power: f32,
+) -> PyResult<Bound<'py, PyArray1<f32>>> {
     let S_db_slice = S_db.as_slice()?;
 
     let result: Vec<f32> = S_db_slice
@@ -1190,6 +1457,21 @@ pub fn db_to_power_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (S_db, ref_power = 1.0))]
 pub fn db_to_power_f64<'py>(
+    py: Python<'py>,
+    S_db: PyReadonlyArray1<'py, f64>,
+    ref_power: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => db_to_power_f64_cpu(py, S_db, ref_power),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => db_to_power_f64_cpu(py, S_db, ref_power),
+        RustDevice::Auto => db_to_power_f64_cpu(py, S_db, ref_power),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => db_to_power_f64_cpu(py, S_db, ref_power),
+    }
+}
+
+fn db_to_power_f64_cpu<'py>(
     py: Python<'py>,
     S_db: PyReadonlyArray1<'py, f64>,
     ref_power: f64,
@@ -1215,6 +1497,21 @@ pub fn db_to_amplitude_f32<'py>(
     A_db: PyReadonlyArray1<'py, f32>,
     ref_amplitude: f32,
 ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => db_to_amplitude_f32_cpu(py, A_db, ref_amplitude),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => db_to_amplitude_f32_cpu(py, A_db, ref_amplitude),
+        RustDevice::Auto => db_to_amplitude_f32_cpu(py, A_db, ref_amplitude),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => db_to_amplitude_f32_cpu(py, A_db, ref_amplitude),
+    }
+}
+
+fn db_to_amplitude_f32_cpu<'py>(
+    py: Python<'py>,
+    A_db: PyReadonlyArray1<'py, f32>,
+    ref_amplitude: f32,
+) -> PyResult<Bound<'py, PyArray1<f32>>> {
     let A_db_slice = A_db.as_slice()?;
 
     let result: Vec<f32> = A_db_slice
@@ -1230,6 +1527,21 @@ pub fn db_to_amplitude_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (A_db, ref_amplitude = 1.0))]
 pub fn db_to_amplitude_f64<'py>(
+    py: Python<'py>,
+    A_db: PyReadonlyArray1<'py, f64>,
+    ref_amplitude: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => db_to_amplitude_f64_cpu(py, A_db, ref_amplitude),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => db_to_amplitude_f64_cpu(py, A_db, ref_amplitude),
+        RustDevice::Auto => db_to_amplitude_f64_cpu(py, A_db, ref_amplitude),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => db_to_amplitude_f64_cpu(py, A_db, ref_amplitude),
+    }
+}
+
+fn db_to_amplitude_f64_cpu<'py>(
     py: Python<'py>,
     A_db: PyReadonlyArray1<'py, f64>,
     ref_amplitude: f64,
@@ -1341,6 +1653,21 @@ pub fn spectral_contrast_band_f32<'py>(
     s_band: PyReadonlyArray2<'py, f32>,
     quantile: f64,
 ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<f32>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_contrast_band_f32_cpu(py, s_band, quantile),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_contrast_band_f32_cpu(py, s_band, quantile),
+        RustDevice::Auto => spectral_contrast_band_f32_cpu(py, s_band, quantile),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_contrast_band_f32_cpu(py, s_band, quantile),
+    }
+}
+
+fn spectral_contrast_band_f32_cpu<'py>(
+    py: Python<'py>,
+    s_band: PyReadonlyArray2<'py, f32>,
+    quantile: f64,
+) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<f32>>)> {
     if !(0.0 < quantile && quantile < 1.0) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "quantile must lie in (0, 1)",
@@ -1439,6 +1766,21 @@ pub fn spectral_contrast_band_f64<'py>(
     s_band: PyReadonlyArray2<'py, f64>,
     quantile: f64,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_contrast_band_f64_cpu(py, s_band, quantile),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_contrast_band_f64_cpu(py, s_band, quantile),
+        RustDevice::Auto => spectral_contrast_band_f64_cpu(py, s_band, quantile),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_contrast_band_f64_cpu(py, s_band, quantile),
+    }
+}
+
+fn spectral_contrast_band_f64_cpu<'py>(
+    py: Python<'py>,
+    s_band: PyReadonlyArray2<'py, f64>,
+    quantile: f64,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)> {
     if !(0.0 < quantile && quantile < 1.0) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "quantile must lie in (0, 1)",
@@ -1473,6 +1815,23 @@ pub fn spectral_contrast_band_f64<'py>(
 #[pyfunction]
 #[pyo3(signature = (s_batch, band_starts, band_stops, idx_qs))]
 pub fn spectral_contrast_fused_f32<'py>(
+    py: Python<'py>,
+    s_batch: PyReadonlyArray3<'py, f32>,
+    band_starts: PyReadonlyArray1<'py, i64>,
+    band_stops: PyReadonlyArray1<'py, i64>,
+    idx_qs: PyReadonlyArray1<'py, i64>,
+) -> PyResult<(Bound<'py, PyArray3<f32>>, Bound<'py, PyArray3<f32>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_contrast_fused_f32_cpu(py, s_batch, band_starts, band_stops, idx_qs),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_contrast_fused_f32_cpu(py, s_batch, band_starts, band_stops, idx_qs),
+        RustDevice::Auto => spectral_contrast_fused_f32_cpu(py, s_batch, band_starts, band_stops, idx_qs),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_contrast_fused_f32_cpu(py, s_batch, band_starts, band_stops, idx_qs),
+    }
+}
+
+fn spectral_contrast_fused_f32_cpu<'py>(
     py: Python<'py>,
     s_batch: PyReadonlyArray3<'py, f32>,
     band_starts: PyReadonlyArray1<'py, i64>,
@@ -1588,6 +1947,23 @@ pub fn spectral_contrast_fused_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s_batch, band_starts, band_stops, idx_qs))]
 pub fn spectral_contrast_fused_f64<'py>(
+    py: Python<'py>,
+    s_batch: PyReadonlyArray3<'py, f64>,
+    band_starts: PyReadonlyArray1<'py, i64>,
+    band_stops: PyReadonlyArray1<'py, i64>,
+    idx_qs: PyReadonlyArray1<'py, i64>,
+) -> PyResult<(Bound<'py, PyArray3<f64>>, Bound<'py, PyArray3<f64>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_contrast_fused_f64_cpu(py, s_batch, band_starts, band_stops, idx_qs),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_contrast_fused_f64_cpu(py, s_batch, band_starts, band_stops, idx_qs),
+        RustDevice::Auto => spectral_contrast_fused_f64_cpu(py, s_batch, band_starts, band_stops, idx_qs),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_contrast_fused_f64_cpu(py, s_batch, band_starts, band_stops, idx_qs),
+    }
+}
+
+fn spectral_contrast_fused_f64_cpu<'py>(
     py: Python<'py>,
     s_batch: PyReadonlyArray3<'py, f64>,
     band_starts: PyReadonlyArray1<'py, i64>,
@@ -1711,6 +2087,22 @@ pub fn spectral_flatness_f32<'py>(
     amin: f64,
     power: f64,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_flatness_f32_cpu(py, s, amin, power),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_flatness_f32_cpu(py, s, amin, power),
+        RustDevice::Auto => spectral_flatness_f32_cpu(py, s, amin, power),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_flatness_f32_cpu(py, s, amin, power),
+    }
+}
+
+fn spectral_flatness_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    amin: f64,
+    power: f64,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
     if amin <= 0.0 {
         return Err(pyo3::exceptions::PyValueError::new_err("amin must be strictly positive"));
     }
@@ -1766,6 +2158,22 @@ pub fn spectral_flatness_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, amin, power))]
 pub fn spectral_flatness_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    amin: f64,
+    power: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_flatness_f64_cpu(py, s, amin, power),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_flatness_f64_cpu(py, s, amin, power),
+        RustDevice::Auto => spectral_flatness_f64_cpu(py, s, amin, power),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_flatness_f64_cpu(py, s, amin, power),
+    }
+}
+
+fn spectral_flatness_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     amin: f64,
@@ -1838,6 +2246,24 @@ pub fn spectral_bandwidth_f32<'py>(
     norm: bool,
     p: f64,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_bandwidth_f32_cpu(py, s, freq, centroid, norm, p),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_bandwidth_f32_cpu(py, s, freq, centroid, norm, p),
+        RustDevice::Auto => spectral_bandwidth_f32_cpu(py, s, freq, centroid, norm, p),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_bandwidth_f32_cpu(py, s, freq, centroid, norm, p),
+    }
+}
+
+fn spectral_bandwidth_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    freq: PyReadonlyArray1<'py, f64>,
+    centroid: PyReadonlyArray2<'py, f64>,
+    norm: bool,
+    p: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     if p <= 0.0 { return Err(pyo3::exceptions::PyValueError::new_err("p must be strictly positive")); }
     let s_view = s.as_array();
     let freq_view = freq.as_array();
@@ -1875,6 +2301,24 @@ pub fn spectral_bandwidth_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, freq, centroid, norm=true, p=2.0))]
 pub fn spectral_bandwidth_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    freq: PyReadonlyArray1<'py, f64>,
+    centroid: PyReadonlyArray2<'py, f64>,
+    norm: bool,
+    p: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_bandwidth_f64_cpu(py, s, freq, centroid, norm, p),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_bandwidth_f64_cpu(py, s, freq, centroid, norm, p),
+        RustDevice::Auto => spectral_bandwidth_f64_cpu(py, s, freq, centroid, norm, p),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_bandwidth_f64_cpu(py, s, freq, centroid, norm, p),
+    }
+}
+
+fn spectral_bandwidth_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     freq: PyReadonlyArray1<'py, f64>,
@@ -1931,6 +2375,23 @@ pub fn spectral_bandwidth_auto_centroid_f32<'py>(
     norm: bool,
     p: f64,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_bandwidth_auto_centroid_f32_cpu(py, s, freq, norm, p),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_bandwidth_auto_centroid_f32_cpu(py, s, freq, norm, p),
+        RustDevice::Auto => spectral_bandwidth_auto_centroid_f32_cpu(py, s, freq, norm, p),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_bandwidth_auto_centroid_f32_cpu(py, s, freq, norm, p),
+    }
+}
+
+fn spectral_bandwidth_auto_centroid_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    freq: PyReadonlyArray1<'py, f64>,
+    norm: bool,
+    p: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     if p <= 0.0 { return Err(pyo3::exceptions::PyValueError::new_err("p must be strictly positive")); }
     let s_view = s.as_array();
     let freq_view = freq.as_array();
@@ -1966,6 +2427,23 @@ pub fn spectral_bandwidth_auto_centroid_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, freq, norm=true, p=2.0))]
 pub fn spectral_bandwidth_auto_centroid_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    freq: PyReadonlyArray1<'py, f64>,
+    norm: bool,
+    p: f64,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => spectral_bandwidth_auto_centroid_f64_cpu(py, s, freq, norm, p),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => spectral_bandwidth_auto_centroid_f64_cpu(py, s, freq, norm, p),
+        RustDevice::Auto => spectral_bandwidth_auto_centroid_f64_cpu(py, s, freq, norm, p),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => spectral_bandwidth_auto_centroid_f64_cpu(py, s, freq, norm, p),
+    }
+}
+
+fn spectral_bandwidth_auto_centroid_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     freq: PyReadonlyArray1<'py, f64>,
@@ -2234,6 +2712,21 @@ pub fn median_filter_harmonic_f32<'py>(
     s: PyReadonlyArray2<'py, f32>,
     kernel_size: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => median_filter_harmonic_f32_cpu(py, s, kernel_size),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => median_filter_harmonic_f32_cpu(py, s, kernel_size),
+        RustDevice::Auto => median_filter_harmonic_f32_cpu(py, s, kernel_size),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => median_filter_harmonic_f32_cpu(py, s, kernel_size),
+    }
+}
+
+fn median_filter_harmonic_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    kernel_size: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
     if kernel_size == 0 {
         return Err(pyo3::exceptions::PyValueError::new_err("kernel_size must be positive"));
     }
@@ -2246,6 +2739,21 @@ pub fn median_filter_harmonic_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, kernel_size))]
 pub fn median_filter_harmonic_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    kernel_size: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => median_filter_harmonic_f64_cpu(py, s, kernel_size),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => median_filter_harmonic_f64_cpu(py, s, kernel_size),
+        RustDevice::Auto => median_filter_harmonic_f64_cpu(py, s, kernel_size),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => median_filter_harmonic_f64_cpu(py, s, kernel_size),
+    }
+}
+
+fn median_filter_harmonic_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     kernel_size: usize,
@@ -2268,6 +2776,21 @@ pub fn median_filter_percussive_f32<'py>(
     s: PyReadonlyArray2<'py, f32>,
     kernel_size: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => median_filter_percussive_f32_cpu(py, s, kernel_size),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => median_filter_percussive_f32_cpu(py, s, kernel_size),
+        RustDevice::Auto => median_filter_percussive_f32_cpu(py, s, kernel_size),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => median_filter_percussive_f32_cpu(py, s, kernel_size),
+    }
+}
+
+fn median_filter_percussive_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    kernel_size: usize,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
     if kernel_size == 0 {
         return Err(pyo3::exceptions::PyValueError::new_err("kernel_size must be positive"));
     }
@@ -2280,6 +2803,21 @@ pub fn median_filter_percussive_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, kernel_size))]
 pub fn median_filter_percussive_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    kernel_size: usize,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => median_filter_percussive_f64_cpu(py, s, kernel_size),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => median_filter_percussive_f64_cpu(py, s, kernel_size),
+        RustDevice::Auto => median_filter_percussive_f64_cpu(py, s, kernel_size),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => median_filter_percussive_f64_cpu(py, s, kernel_size),
+    }
+}
+
+fn median_filter_percussive_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     kernel_size: usize,
@@ -2505,6 +3043,26 @@ pub fn hpss_fused_f32<'py>(
     margin_perc: f64,
     return_mask: bool,
 ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<f32>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => hpss_fused_f32_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => hpss_fused_f32_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        RustDevice::Auto => hpss_fused_f32_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => hpss_fused_f32_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+    }
+}
+
+fn hpss_fused_f32_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    win_harm: usize,
+    win_perc: usize,
+    power: f64,
+    margin_harm: f64,
+    margin_perc: f64,
+    return_mask: bool,
+) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<f32>>)> {
     let (out_h, out_p) = hpss_fused_core_2d_f32(
         s.as_array(),
         win_harm,
@@ -2533,6 +3091,26 @@ pub fn hpss_fused_f64<'py>(
     margin_perc: f64,
     return_mask: bool,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => hpss_fused_f64_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => hpss_fused_f64_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        RustDevice::Auto => hpss_fused_f64_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => hpss_fused_f64_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+    }
+}
+
+fn hpss_fused_f64_cpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    win_harm: usize,
+    win_perc: usize,
+    power: f64,
+    margin_harm: f64,
+    margin_perc: f64,
+    return_mask: bool,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>)> {
     let (out_h, out_p) = hpss_fused_core_2d_f64(
         s.as_array(),
         win_harm,
@@ -2552,6 +3130,26 @@ pub fn hpss_fused_f64<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask=false))]
 pub fn hpss_fused_batch_f32<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray3<'py, f32>,
+    win_harm: usize,
+    win_perc: usize,
+    power: f64,
+    margin_harm: f64,
+    margin_perc: f64,
+    return_mask: bool,
+) -> PyResult<(Bound<'py, PyArray3<f32>>, Bound<'py, PyArray3<f32>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => hpss_fused_batch_f32_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => hpss_fused_batch_f32_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        RustDevice::Auto => hpss_fused_batch_f32_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => hpss_fused_batch_f32_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+    }
+}
+
+fn hpss_fused_batch_f32_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray3<'py, f32>,
     win_harm: usize,
@@ -2630,6 +3228,26 @@ pub fn hpss_fused_batch_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask=false))]
 pub fn hpss_fused_batch_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray3<'py, f64>,
+    win_harm: usize,
+    win_perc: usize,
+    power: f64,
+    margin_harm: f64,
+    margin_perc: f64,
+    return_mask: bool,
+) -> PyResult<(Bound<'py, PyArray3<f64>>, Bound<'py, PyArray3<f64>>)> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => hpss_fused_batch_f64_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => hpss_fused_batch_f64_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        RustDevice::Auto => hpss_fused_batch_f64_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => hpss_fused_batch_f64_cpu(py, s, win_harm, win_perc, power, margin_harm, margin_perc, return_mask),
+    }
+}
+
+fn hpss_fused_batch_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray3<'py, f64>,
     win_harm: usize,

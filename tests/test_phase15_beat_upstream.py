@@ -99,6 +99,32 @@ def test_onset_flux_median_ref_single_frame():
     assert out.shape == (1, 0)
 
 
+@skip_no_rust
+def test_onset_flux_median_ref_bad_lag_raises():
+    S = np.ones((16, 8), dtype=np.float32)
+    with pytest.raises(ValueError, match="lag must be a positive integer"):
+        _rust_ext.onset_flux_median_ref_f32(S, S, 0)
+
+
+@skip_no_rust
+def test_onset_flux_median_ref_shape_mismatch_raises():
+    S = np.ones((16, 8), dtype=np.float64)
+    ref = np.ones((15, 8), dtype=np.float64)
+    with pytest.raises(ValueError, match="reference spectrum shape must match input spectrum shape"):
+        _rust_ext.onset_flux_median_ref_f64(S, ref, 1)
+
+
+@skip_no_rust
+def test_onset_flux_median_ref_nan_propagates():
+    S = np.zeros((4, 6), dtype=np.float32)
+    S[2, 3] = np.nan
+
+    rs_out = _rust_ext.onset_flux_median_ref_f32(S, S, 1).ravel()
+    py_out = np.median(np.maximum(0.0, S[:, 1:] - S[:, :-1]), axis=0)
+
+    np.testing.assert_array_equal(np.isnan(rs_out), np.isnan(py_out))
+
+
 # ── tempogram_ac parity ───────────────────────────────────────────────────────
 
 @skip_no_rust
@@ -129,6 +155,28 @@ def test_tempogram_ac_zero_input():
     out = _rust_ext.tempogram_ac_f32(np.ascontiguousarray(W), n_pad)
     assert out.shape == (50, 100)
     assert np.allclose(out, 0.0)
+
+
+@skip_no_rust
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_tempogram_ac_device_override_matches_cpu(monkeypatch, dtype):
+    rng = np.random.default_rng(701)
+    win_len = 64
+    n_frames = 48
+    w = np.ascontiguousarray(rng.random((win_len, n_frames)).astype(dtype))
+    n_pad = int(scipy.fft.next_fast_len(2 * win_len - 1, real=True))
+
+    suffix = "f32" if dtype == np.float32 else "f64"
+    fn = getattr(_rust_ext, f"tempogram_ac_{suffix}")
+
+    monkeypatch.setenv("IRON_LIBROSA_RUST_DEVICE", "cpu")
+    out_cpu = fn(w, n_pad)
+
+    monkeypatch.setenv("IRON_LIBROSA_RUST_DEVICE", "apple-gpu")
+    out_gpu_req = fn(w, n_pad)
+
+    tol = 1e-5 if dtype == np.float32 else 1e-12
+    np.testing.assert_allclose(out_cpu, out_gpu_req, rtol=tol, atol=tol)
 
 
 # ── end-to-end beat_track parity ─────────────────────────────────────────────

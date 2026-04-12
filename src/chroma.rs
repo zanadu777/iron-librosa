@@ -13,6 +13,26 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
+#[cfg(all(feature = "apple-gpu", target_os = "macos"))]
+use std::sync::OnceLock;
+
+use crate::backend::{resolved_rust_device, RustDevice};
+
+#[cfg(all(feature = "apple-gpu", target_os = "macos"))]
+const DEFAULT_CHROMA_GPU_WORK_THRESHOLD: usize = 800_000_000;
+
+#[cfg(all(feature = "apple-gpu", target_os = "macos"))]
+fn chroma_gpu_work_threshold() -> usize {
+    static OVERRIDE: OnceLock<usize> = OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_CHROMA_GPU_WORK_THRESHOLD")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT_CHROMA_GPU_WORK_THRESHOLD)
+    })
+}
+
 fn validate_shapes<T>(
     s: &ndarray::ArrayView2<'_, T>,
     chroma_basis: &ndarray::ArrayView2<'_, T>,
@@ -217,6 +237,27 @@ pub fn chroma_filter_f64<'py>(
     base_c: bool,
     norm: Option<u32>,
 ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => chroma_filter_f64_cpu(py, sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => chroma_filter_f64_cpu(py, sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm),
+        RustDevice::Auto => chroma_filter_f64_cpu(py, sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => chroma_filter_f64_cpu(py, sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm),
+    }
+}
+
+fn chroma_filter_f64_cpu<'py>(
+    py: Python<'py>,
+    sr: f64,
+    n_fft: usize,
+    n_chroma: usize,
+    tuning: f64,
+    ctroct: f64,
+    octwidth: Option<f64>,
+    base_c: bool,
+    norm: Option<u32>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
     let out = build_chroma_filter_f64(sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm)?;
     Ok(out.into_pyarray_bound(py).to_owned())
 }
@@ -224,6 +265,27 @@ pub fn chroma_filter_f64<'py>(
 #[pyfunction]
 #[pyo3(signature = (sr, n_fft, n_chroma=12, tuning=0.0, ctroct=5.0, octwidth=Some(2.0), base_c=true, norm=Some(2)))]
 pub fn chroma_filter_f32<'py>(
+    py: Python<'py>,
+    sr: f64,
+    n_fft: usize,
+    n_chroma: usize,
+    tuning: f64,
+    ctroct: f64,
+    octwidth: Option<f64>,
+    base_c: bool,
+    norm: Option<u32>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => chroma_filter_f32_cpu(py, sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm),
+        // GPU stub: fallback to CPU until Metal kernel is implemented.
+        RustDevice::AppleGpu => chroma_filter_f32_cpu(py, sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm),
+        RustDevice::Auto => chroma_filter_f32_cpu(py, sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => chroma_filter_f32_cpu(py, sr, n_fft, n_chroma, tuning, ctroct, octwidth, base_c, norm),
+    }
+}
+
+fn chroma_filter_f32_cpu<'py>(
     py: Python<'py>,
     sr: f64,
     n_fft: usize,
@@ -250,6 +312,45 @@ pub fn chroma_filter_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, chroma_basis))]
 pub fn chroma_project_f32<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    chroma_basis: PyReadonlyArray2<'py, f32>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => chroma_project_f32_cpu(py, s, chroma_basis),
+        RustDevice::AppleGpu => chroma_project_f32_apple_gpu(py, s, chroma_basis),
+        RustDevice::Auto => chroma_project_f32_cpu(py, s, chroma_basis),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => chroma_project_f32_cpu(py, s, chroma_basis),
+    }
+}
+
+fn chroma_project_f32_apple_gpu<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f32>,
+    chroma_basis: PyReadonlyArray2<'py, f32>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    #[cfg(all(feature = "apple-gpu", target_os = "macos"))]
+    {
+        let s_view = s.as_array();
+        let chroma_view = chroma_basis.as_array();
+        let work = s_view
+            .shape()[0]
+            .saturating_mul(s_view.shape()[1])
+            .saturating_mul(chroma_view.shape()[0]);
+
+        if work >= chroma_gpu_work_threshold() {
+            if let Some(out) = crate::mel::try_project_f32_apple_gpu(&s_view, &chroma_view) {
+                return Ok(out.into_pyarray_bound(py).to_owned());
+            }
+        }
+    }
+
+    // Safe fallback policy: any unavailable/failed GPU path returns CPU output.
+    chroma_project_f32_cpu(py, s, chroma_basis)
+}
+
+fn chroma_project_f32_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f32>,
     chroma_basis: PyReadonlyArray2<'py, f32>,
@@ -285,6 +386,21 @@ pub fn chroma_project_f32<'py>(
 #[pyfunction]
 #[pyo3(signature = (s, chroma_basis))]
 pub fn chroma_project_f64<'py>(
+    py: Python<'py>,
+    s: PyReadonlyArray2<'py, f64>,
+    chroma_basis: PyReadonlyArray2<'py, f64>,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    match resolved_rust_device() {
+        RustDevice::Cpu => chroma_project_f64_cpu(py, s, chroma_basis),
+        // Phase 1 scaffold: keep CPU path while Apple GPU kernels are pending.
+        RustDevice::AppleGpu => chroma_project_f64_cpu(py, s, chroma_basis),
+        RustDevice::Auto => chroma_project_f64_cpu(py, s, chroma_basis),
+        // Phase 21 stub: CUDA not yet implemented; route to CPU.
+        RustDevice::CudaGpu => chroma_project_f64_cpu(py, s, chroma_basis),
+    }
+}
+
+fn chroma_project_f64_cpu<'py>(
     py: Python<'py>,
     s: PyReadonlyArray2<'py, f64>,
     chroma_basis: PyReadonlyArray2<'py, f64>,
