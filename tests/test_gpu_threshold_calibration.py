@@ -12,8 +12,9 @@ def _load_module():
     path = Path(__file__).resolve().parent.parent / "scripts" / "calibrate_gpu_work_threshold.py"
     module_name = "calibrate_gpu_work_threshold"
     spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load module spec for {path}")
     mod = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
     sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
     return mod
