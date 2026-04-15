@@ -3,6 +3,7 @@ use faer::{Accum, MatMut, MatRef, Par};
 use numpy::{IntoPyArray, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use std::cell::RefCell;
 
 #[cfg(all(feature = "apple-gpu", target_os = "macos"))]
 use metal::{
@@ -10,7 +11,7 @@ use metal::{
     MTLSize,
 };
 #[cfg(all(feature = "apple-gpu", target_os = "macos"))]
-use std::{cell::RefCell, sync::OnceLock};
+use std::sync::OnceLock;
 
 use crate::backend::{resolved_rust_device, RustDevice};
 
@@ -163,6 +164,112 @@ fn validate_shapes<T>(
     Ok((n_fft_bins, n_frames, n_mels))
 }
 
+#[derive(Default)]
+struct BatchCenterPadCache {
+    src_ptr: usize,
+    src_len: usize,
+    src_sig: u64,
+    n_channels: usize,
+    n_src_samples: usize,
+    n_fft: usize,
+    padded: Vec<f32>,
+}
+
+thread_local! {
+    static BATCH_CENTER_PAD_CACHE: RefCell<BatchCenterPadCache> =
+        RefCell::new(BatchCenterPadCache::default());
+}
+
+#[inline]
+fn quick_sig_f32_slice(data: &[f32]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut h = FNV_OFFSET;
+    let len = data.len();
+    if len == 0 {
+        return 0;
+    }
+
+    #[inline]
+    fn mix_u64(mut h: u64, v: u64) -> u64 {
+        h ^= v;
+        h.wrapping_mul(FNV_PRIME)
+    }
+
+    let raw = unsafe {
+        std::slice::from_raw_parts(
+            data.as_ptr() as *const u8,
+            data.len().saturating_mul(std::mem::size_of::<f32>()),
+        )
+    };
+
+    h = mix_u64(h, len as u64);
+    h = mix_u64(h, data[0].to_bits() as u64);
+    h = mix_u64(h, data[len / 2].to_bits() as u64);
+    h = mix_u64(h, data[len - 1].to_bits() as u64);
+
+    // Spread byte-level probes across the payload to catch many in-place edits cheaply.
+    const N_SAMPLES: usize = 16;
+    for i in 0..N_SAMPLES {
+        let pos = i.saturating_mul(raw.len().saturating_sub(1)) / (N_SAMPLES - 1);
+        h = mix_u64(h, raw[pos] as u64);
+    }
+
+    h
+}
+
+fn cached_center_padded_batch<'a>(
+    cache: &'a mut BatchCenterPadCache,
+    y_slice: &[f32],
+    n_channels: usize,
+    n_src_samples: usize,
+    n_fft: usize,
+) -> &'a [f32] {
+    let src_ptr = y_slice.as_ptr() as usize;
+    let src_len = y_slice.len();
+    let src_sig = quick_sig_f32_slice(y_slice);
+    let pad = n_fft / 2;
+    let n_padded = n_src_samples + 2 * pad;
+    let total = n_channels * n_padded;
+
+    let cache_hit = cache.src_ptr == src_ptr
+        && cache.src_len == src_len
+        && cache.src_sig == src_sig
+        && cache.n_channels == n_channels
+        && cache.n_src_samples == n_src_samples
+        && cache.n_fft == n_fft
+        && cache.padded.len() == total;
+
+    if !cache_hit {
+        cache.padded.resize(total, 0.0);
+        cache.padded.fill(0.0);
+        for ch in 0..n_channels {
+            let src_off = ch * n_src_samples;
+            let dst_off = ch * n_padded + pad;
+            cache.padded[dst_off..dst_off + n_src_samples]
+                .copy_from_slice(&y_slice[src_off..src_off + n_src_samples]);
+        }
+        cache.src_ptr = src_ptr;
+        cache.src_len = src_len;
+        cache.src_sig = src_sig;
+        cache.n_channels = n_channels;
+        cache.n_src_samples = n_src_samples;
+        cache.n_fft = n_fft;
+    }
+
+    cache.padded.as_slice()
+}
+
+#[inline]
+fn alloc_uninit_f32(len: usize) -> Vec<f32> {
+    // The fused CUDA paths write every output element before Rust reads it.
+    let mut out = Vec::with_capacity(len);
+    unsafe {
+        out.set_len(len);
+    }
+    out
+}
+
 fn fused_mel_single_channel(
     y_slice: &[f32],
     n_fft: usize,
@@ -174,10 +281,8 @@ fn fused_mel_single_channel(
 ) -> PyResult<(usize, Vec<f32>)> {
     let y_padded: Vec<f32> = if center {
         let pad = n_fft / 2;
-        let mut v = Vec::with_capacity(y_slice.len() + 2 * pad);
-        v.extend(std::iter::repeat(0.0f32).take(pad));
-        v.extend_from_slice(y_slice);
-        v.extend(std::iter::repeat(0.0f32).take(pad));
+        let mut v = vec![0.0f32; y_slice.len() + 2 * pad];
+        v[pad..pad + y_slice.len()].copy_from_slice(y_slice);
         v
     } else {
         y_slice.to_vec()
@@ -188,7 +293,7 @@ fn fused_mel_single_channel(
     }
 
     let n_frames = 1 + (y_padded.len() - n_fft) / hop_length;
-    let mut out = vec![0.0f32; n_mels * n_frames];
+    let mut out = alloc_uninit_f32(n_mels * n_frames);
 
     crate::cuda_fft::fused_stft_mel_power_f32_gpu(
         &y_padded,
@@ -297,6 +402,9 @@ pub fn melspectrogram_fused_batch_f32<'py>(
     if n_channels == 0 {
         return Err(PyValueError::new_err("batch dimension must be > 0"));
     }
+    let y_slice = y_view
+        .as_slice()
+        .ok_or_else(|| PyValueError::new_err("y must be C-contiguous"))?;
 
     let window_slice = window.as_slice()?;
     if window_slice.len() != n_fft {
@@ -321,26 +429,6 @@ pub fn melspectrogram_fused_batch_f32<'py>(
         .as_slice()
         .ok_or_else(|| PyValueError::new_err("mel_basis must be C-contiguous"))?;
 
-    let y_padded = if center {
-        let pad = n_fft / 2;
-        let n_padded = n_src_samples + 2 * pad;
-        let mut out = vec![0.0f32; n_channels * n_padded];
-        for ch in 0..n_channels {
-            let src = y_view.row(ch);
-            let dst_off = ch * n_padded + pad;
-            for (i, val) in src.iter().enumerate() {
-                out[dst_off + i] = *val;
-            }
-        }
-        out
-    } else {
-        let mut out = Vec::with_capacity(n_channels * n_src_samples);
-        for ch in 0..n_channels {
-            out.extend(y_view.row(ch).iter().copied());
-        }
-        out
-    };
-
     let n_samples_per_channel = if center {
         n_src_samples + n_fft
     } else {
@@ -350,21 +438,47 @@ pub fn melspectrogram_fused_batch_f32<'py>(
         return Err(PyValueError::new_err("Audio too short for given n_fft."));
     }
     let n_frames = 1 + (n_samples_per_channel - n_fft) / hop_length;
-    let mut out_all = vec![0.0f32; n_channels * n_mels * n_frames];
+    let mut out_all = alloc_uninit_f32(n_channels * n_mels * n_frames);
 
-    crate::cuda_fft::fused_stft_mel_power_batch_f32_gpu(
-        &y_padded,
-        n_channels,
-        n_samples_per_channel,
-        window_slice,
-        hop_length,
-        mel_basis_slice,
-        &mut out_all,
-        n_fft,
-        n_frames,
-        n_mels,
-    )
-    .map_err(PyRuntimeError::new_err)?;
+    if center {
+        BATCH_CENTER_PAD_CACHE.with(|slot| -> PyResult<()> {
+            let mut cache = slot.borrow_mut();
+            let y_padded = cached_center_padded_batch(
+                &mut cache,
+                y_slice,
+                n_channels,
+                n_src_samples,
+                n_fft,
+            );
+            crate::cuda_fft::fused_stft_mel_power_batch_f32_gpu(
+                y_padded,
+                n_channels,
+                n_samples_per_channel,
+                window_slice,
+                hop_length,
+                mel_basis_slice,
+                &mut out_all,
+                n_fft,
+                n_frames,
+                n_mels,
+            )
+            .map_err(PyRuntimeError::new_err)
+        })?;
+    } else {
+        crate::cuda_fft::fused_stft_mel_power_batch_f32_gpu(
+            y_slice,
+            n_channels,
+            n_samples_per_channel,
+            window_slice,
+            hop_length,
+            mel_basis_slice,
+            &mut out_all,
+            n_fft,
+            n_frames,
+            n_mels,
+        )
+        .map_err(PyRuntimeError::new_err)?;
+    }
 
     let out_arr = ndarray::Array3::from_shape_vec((n_channels, n_mels, n_frames), out_all)
         .map_err(|e| PyRuntimeError::new_err(format!("mel output shape error: {}", e)))?;

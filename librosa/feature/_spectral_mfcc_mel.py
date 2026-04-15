@@ -42,6 +42,77 @@ except Exception:
 # Set IRON_LIBROSA_MEL_BACKEND=rust env var to force the Rust faer path.
 _MEL_RUST_WORK_THRESHOLD = 201_226_955
 
+# Small process-local cache for fused-CUDA prep artifacts (window + mel basis).
+_FUSED_MEL_PREP_CACHE: Dict[Any, Any] = {}
+_FUSED_MEL_PREP_CACHE_MAX = 16
+
+
+def _fused_mel_prep_cache_key(
+    *,
+    sr: float,
+    n_fft: int,
+    win_length: int,
+    window: _WindowSpec,
+    kwargs: Dict[str, Any],
+) -> Optional[Any]:
+    if not isinstance(window, (str, int, float, tuple)):
+        return None
+
+    normalized_items = []
+    for key, value in sorted(kwargs.items()):
+        if key == "dtype":
+            continue
+        if isinstance(value, (str, int, float, bool, type(None))):
+            normalized_items.append((key, value))
+        else:
+            return None
+
+    return (
+        float(sr),
+        int(n_fft),
+        int(win_length),
+        window,
+        tuple(normalized_items),
+    )
+
+
+def _get_fused_mel_prep_cached(
+    *,
+    sr: float,
+    n_fft: int,
+    win_length: int,
+    window: _WindowSpec,
+    kwargs: Dict[str, Any],
+) -> Any:
+    cache_key = _fused_mel_prep_cache_key(
+        sr=sr,
+        n_fft=n_fft,
+        win_length=win_length,
+        window=window,
+        kwargs=kwargs,
+    )
+
+    if cache_key is not None:
+        cached = _FUSED_MEL_PREP_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+    fft_window = filters.get_window(window, win_length, fftbins=True)
+    fft_window = util.pad_center(fft_window, size=n_fft)
+    win_c = np.ascontiguousarray(fft_window, dtype=np.float32)
+    mel_basis = filters.mel(sr=sr, n_fft=n_fft, **kwargs)
+    if mel_basis.dtype != np.float32:
+        mel_basis = mel_basis.astype(np.float32, copy=False)
+    mel_c = np.ascontiguousarray(mel_basis, dtype=np.float32)
+    prepared = (win_c, mel_c)
+
+    if cache_key is not None:
+        if len(_FUSED_MEL_PREP_CACHE) >= _FUSED_MEL_PREP_CACHE_MAX:
+            _FUSED_MEL_PREP_CACHE.pop(next(iter(_FUSED_MEL_PREP_CACHE)))
+        _FUSED_MEL_PREP_CACHE[cache_key] = prepared
+
+    return prepared
+
 
 def _load_external_mel_threshold_registry() -> Dict[str, int]:
     """Load optional per-profile mel thresholds from JSON file."""
@@ -167,13 +238,13 @@ def _try_cuda_fused_melspectrogram(
         return None
 
     try:
-        fft_window = filters.get_window(window, win_length, fftbins=True)
-        fft_window = util.pad_center(fft_window, size=n_fft)
-        win_c = np.ascontiguousarray(fft_window, dtype=np.float32)
-        mel_basis = filters.mel(sr=sr, n_fft=n_fft, **kwargs)
-        if mel_basis.dtype != np.float32:
-            mel_basis = mel_basis.astype(np.float32, copy=False)
-        mel_c = np.ascontiguousarray(mel_basis, dtype=np.float32)
+        win_c, mel_c = _get_fused_mel_prep_cached(
+            sr=sr,
+            n_fft=n_fft,
+            win_length=win_length,
+            window=window,
+            kwargs=kwargs,
+        )
 
         if y.ndim == 1:
             y_c = np.ascontiguousarray(y, dtype=np.float32)
