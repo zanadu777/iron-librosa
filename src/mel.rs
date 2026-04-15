@@ -1,7 +1,7 @@
 use faer::linalg::matmul::matmul;
 use faer::{Accum, MatMut, MatRef, Par};
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
-use pyo3::exceptions::PyValueError;
+use numpy::{IntoPyArray, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 #[cfg(all(feature = "apple-gpu", target_os = "macos"))]
@@ -161,6 +161,214 @@ fn validate_shapes<T>(
     }
 
     Ok((n_fft_bins, n_frames, n_mels))
+}
+
+fn fused_mel_single_channel(
+    y_slice: &[f32],
+    n_fft: usize,
+    hop_length: usize,
+    center: bool,
+    window_slice: &[f32],
+    mel_basis_slice: &[f32],
+    n_mels: usize,
+) -> PyResult<(usize, Vec<f32>)> {
+    let y_padded: Vec<f32> = if center {
+        let pad = n_fft / 2;
+        let mut v = Vec::with_capacity(y_slice.len() + 2 * pad);
+        v.extend(std::iter::repeat(0.0f32).take(pad));
+        v.extend_from_slice(y_slice);
+        v.extend(std::iter::repeat(0.0f32).take(pad));
+        v
+    } else {
+        y_slice.to_vec()
+    };
+
+    if y_padded.len() < n_fft {
+        return Err(PyValueError::new_err("Audio too short for given n_fft."));
+    }
+
+    let n_frames = 1 + (y_padded.len() - n_fft) / hop_length;
+    let mut out = vec![0.0f32; n_mels * n_frames];
+
+    crate::cuda_fft::fused_stft_mel_power_f32_gpu(
+        &y_padded,
+        window_slice,
+        hop_length,
+        mel_basis_slice,
+        &mut out,
+        n_fft,
+        n_frames,
+        n_mels,
+    )
+    .map_err(PyRuntimeError::new_err)?;
+
+    Ok((n_frames, out))
+}
+
+#[pyfunction]
+#[pyo3(signature = (y, n_fft, hop_length, center, window, mel_basis))]
+pub fn melspectrogram_fused_f32<'py>(
+    py: Python<'py>,
+    y: PyReadonlyArray1<'py, f32>,
+    n_fft: usize,
+    hop_length: usize,
+    center: bool,
+    window: PyReadonlyArray1<'py, f32>,
+    mel_basis: PyReadonlyArray2<'py, f32>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    if n_fft < 2 {
+        return Err(PyValueError::new_err("n_fft must be >= 2"));
+    }
+    if hop_length == 0 {
+        return Err(PyValueError::new_err("hop_length must be > 0"));
+    }
+    if resolved_rust_device() != RustDevice::CudaGpu {
+        return Err(PyRuntimeError::new_err(
+            "CUDA fused mel path is only available when resolved device is cuda-gpu",
+        ));
+    }
+
+    let y_slice = y.as_slice()?;
+    let window_slice = window.as_slice()?;
+    if window_slice.len() != n_fft {
+        return Err(PyValueError::new_err(format!(
+            "Window length {} != n_fft {}",
+            window_slice.len(),
+            n_fft
+        )));
+    }
+
+    let mel_basis_view = mel_basis.as_array();
+    let n_bins = n_fft / 2 + 1;
+    if mel_basis_view.shape()[1] != n_bins {
+        return Err(PyValueError::new_err(format!(
+            "mel_basis.shape[1] {} != n_fft//2+1 {}",
+            mel_basis_view.shape()[1],
+            n_bins
+        )));
+    }
+    let n_mels = mel_basis_view.shape()[0];
+
+    let mel_basis_slice = mel_basis_view
+        .as_slice()
+        .ok_or_else(|| PyValueError::new_err("mel_basis must be C-contiguous"))?;
+
+    let (n_frames, out) = fused_mel_single_channel(
+        y_slice,
+        n_fft,
+        hop_length,
+        center,
+        window_slice,
+        mel_basis_slice,
+        n_mels,
+    )?;
+
+    let out_arr = ndarray::Array2::from_shape_vec((n_mels, n_frames), out)
+        .map_err(|e| PyRuntimeError::new_err(format!("mel output shape error: {}", e)))?;
+    Ok(out_arr.into_pyarray_bound(py))
+}
+
+#[pyfunction]
+#[pyo3(signature = (y, n_fft, hop_length, center, window, mel_basis))]
+pub fn melspectrogram_fused_batch_f32<'py>(
+    py: Python<'py>,
+    y: PyReadonlyArray2<'py, f32>,
+    n_fft: usize,
+    hop_length: usize,
+    center: bool,
+    window: PyReadonlyArray1<'py, f32>,
+    mel_basis: PyReadonlyArray2<'py, f32>,
+) -> PyResult<Bound<'py, PyArray3<f32>>> {
+    if n_fft < 2 {
+        return Err(PyValueError::new_err("n_fft must be >= 2"));
+    }
+    if hop_length == 0 {
+        return Err(PyValueError::new_err("hop_length must be > 0"));
+    }
+    if resolved_rust_device() != RustDevice::CudaGpu {
+        return Err(PyRuntimeError::new_err(
+            "CUDA fused mel path is only available when resolved device is cuda-gpu",
+        ));
+    }
+
+    let y_view = y.as_array();
+    let n_channels = y_view.shape()[0];
+    let n_src_samples = y_view.shape()[1];
+    if n_channels == 0 {
+        return Err(PyValueError::new_err("batch dimension must be > 0"));
+    }
+
+    let window_slice = window.as_slice()?;
+    if window_slice.len() != n_fft {
+        return Err(PyValueError::new_err(format!(
+            "Window length {} != n_fft {}",
+            window_slice.len(),
+            n_fft
+        )));
+    }
+
+    let mel_basis_view = mel_basis.as_array();
+    let n_bins = n_fft / 2 + 1;
+    if mel_basis_view.shape()[1] != n_bins {
+        return Err(PyValueError::new_err(format!(
+            "mel_basis.shape[1] {} != n_fft//2+1 {}",
+            mel_basis_view.shape()[1],
+            n_bins
+        )));
+    }
+    let n_mels = mel_basis_view.shape()[0];
+    let mel_basis_slice = mel_basis_view
+        .as_slice()
+        .ok_or_else(|| PyValueError::new_err("mel_basis must be C-contiguous"))?;
+
+    let y_padded = if center {
+        let pad = n_fft / 2;
+        let n_padded = n_src_samples + 2 * pad;
+        let mut out = vec![0.0f32; n_channels * n_padded];
+        for ch in 0..n_channels {
+            let src = y_view.row(ch);
+            let dst_off = ch * n_padded + pad;
+            for (i, val) in src.iter().enumerate() {
+                out[dst_off + i] = *val;
+            }
+        }
+        out
+    } else {
+        let mut out = Vec::with_capacity(n_channels * n_src_samples);
+        for ch in 0..n_channels {
+            out.extend(y_view.row(ch).iter().copied());
+        }
+        out
+    };
+
+    let n_samples_per_channel = if center {
+        n_src_samples + n_fft
+    } else {
+        n_src_samples
+    };
+    if n_samples_per_channel < n_fft {
+        return Err(PyValueError::new_err("Audio too short for given n_fft."));
+    }
+    let n_frames = 1 + (n_samples_per_channel - n_fft) / hop_length;
+    let mut out_all = vec![0.0f32; n_channels * n_mels * n_frames];
+
+    crate::cuda_fft::fused_stft_mel_power_batch_f32_gpu(
+        &y_padded,
+        n_channels,
+        n_samples_per_channel,
+        window_slice,
+        hop_length,
+        mel_basis_slice,
+        &mut out_all,
+        n_fft,
+        n_frames,
+        n_mels,
+    )
+    .map_err(PyRuntimeError::new_err)?;
+
+    let out_arr = ndarray::Array3::from_shape_vec((n_channels, n_mels, n_frames), out_all)
+        .map_err(|e| PyRuntimeError::new_err(format!("mel output shape error: {}", e)))?;
+    Ok(out_arr.into_pyarray_bound(py))
 }
 
 /// Reinterpret a C-contiguous `ArrayView2` as a **column-major** faer

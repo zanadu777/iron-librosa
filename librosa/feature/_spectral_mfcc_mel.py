@@ -103,6 +103,124 @@ def _resolve_mel_work_threshold() -> int:
 
     return _MEL_RUST_WORK_THRESHOLD
 
+
+def _cuda_fused_mel_enabled() -> bool:
+    raw = os.getenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "").strip().lower()
+    return raw in {"1", "true", "yes", "on", "force-on"}
+
+
+def _cuda_fused_mel_force_on() -> bool:
+    raw = os.getenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "").strip().lower()
+    return raw == "force-on"
+
+
+def _cuda_fused_backend_ready() -> bool:
+    if _rust_ext is None or not hasattr(_rust_ext, "rust_backend_info"):
+        return False
+    try:
+        info = _rust_ext.rust_backend_info()
+    except Exception:
+        return False
+    return info.get("resolved") == "cuda-gpu"
+
+
+def _try_cuda_fused_melspectrogram(
+    *,
+    y: Optional[np.ndarray],
+    sr: float,
+    S: Optional[np.ndarray],
+    n_fft: int,
+    hop_length: int,
+    win_length: Optional[int],
+    window: _WindowSpec,
+    center: bool,
+    pad_mode: _PadModeSTFT,
+    power: float,
+    **kwargs: Any,
+) -> Optional[np.ndarray]:
+    if (
+        y is None
+        or S is not None
+        or not RUST_AVAILABLE
+        or _rust_ext is None
+        or not hasattr(_rust_ext, "melspectrogram_fused_f32")
+        or FORCE_NUMPY_MEL
+        or not _cuda_fused_mel_enabled()
+        or (not _cuda_fused_mel_force_on() and not _cuda_fused_backend_ready())
+    ):
+        return None
+
+    if y.ndim < 1 or y.dtype != np.float32:
+        return None
+    if power != 2.0:
+        return None
+    if pad_mode != "constant":
+        return None
+
+    if win_length is None:
+        win_length = n_fft
+    if win_length > n_fft:
+        return None
+
+    mel_dtype = np.dtype(kwargs.get("dtype", np.float32))
+    if mel_dtype != np.float32:
+        return None
+
+    try:
+        fft_window = filters.get_window(window, win_length, fftbins=True)
+        fft_window = util.pad_center(fft_window, size=n_fft)
+        win_c = np.ascontiguousarray(fft_window, dtype=np.float32)
+        mel_basis = filters.mel(sr=sr, n_fft=n_fft, **kwargs)
+        if mel_basis.dtype != np.float32:
+            mel_basis = mel_basis.astype(np.float32, copy=False)
+        mel_c = np.ascontiguousarray(mel_basis, dtype=np.float32)
+
+        if y.ndim == 1:
+            y_c = np.ascontiguousarray(y, dtype=np.float32)
+            return _rust_ext.melspectrogram_fused_f32(
+                y_c,
+                int(n_fft),
+                int(hop_length),
+                bool(center),
+                win_c,
+                mel_c,
+            )
+
+        lead_shape = y.shape[:-1]
+        y_batch = np.ascontiguousarray(y.reshape((-1, y.shape[-1])), dtype=np.float32)
+        if hasattr(_rust_ext, "melspectrogram_fused_batch_f32"):
+            try:
+                out = _rust_ext.melspectrogram_fused_batch_f32(
+                    y_batch,
+                    int(n_fft),
+                    int(hop_length),
+                    bool(center),
+                    win_c,
+                    mel_c,
+                )
+                return out.reshape(lead_shape + out.shape[-2:])
+            except Exception:
+                # If the batch fused path fails, keep trying the per-channel fused path
+                # before giving up and returning to the non-fused pipeline.
+                pass
+
+        out_batch = []
+        for ch in range(y_batch.shape[0]):
+            out_batch.append(
+                _rust_ext.melspectrogram_fused_f32(
+                    y_batch[ch],
+                    int(n_fft),
+                    int(hop_length),
+                    bool(center),
+                    win_c,
+                    mel_c,
+                )
+            )
+        out = np.stack(out_batch, axis=0)
+        return out.reshape(lead_shape + out.shape[-2:])
+    except Exception:
+        return None
+
 def mfcc(
     *,
     y: Optional[np.ndarray] = None,
@@ -420,6 +538,22 @@ def melspectrogram(
     >>> fig.colorbar(img, ax=ax, format='%+2.0f dB')
     >>> ax.set(title='Mel-frequency spectrogram')
     """
+    fused_cuda = _try_cuda_fused_melspectrogram(
+        y=y,
+        sr=sr,
+        S=S,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        window=window,
+        center=center,
+        pad_mode=pad_mode,
+        power=power,
+        **kwargs,
+    )
+    if fused_cuda is not None:
+        return fused_cuda
+
     S, n_fft = _spectrogram(
         y=y,
         S=S,

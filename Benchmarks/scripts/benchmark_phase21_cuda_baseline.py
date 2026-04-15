@@ -14,10 +14,9 @@ Usage (PC, before CUDA is wired):
         --json-out Benchmarks/results/phase21_cuda_cpu_baseline_$(date +%F).json \\
         --md-out  Benchmarks/results/phase21_cuda_cpu_baseline_$(date +%F).md
 
-Usage (compare after CUDA active):
+Usage (compare after CUDA active, drop-in auto mode):
     python -u Benchmarks/scripts/benchmark_phase21_cuda_baseline.py \\
-        --rounds 5 --repeats 5 --warmup 2 --device cuda-gpu \\
-        --cuda-experimental force-on \\
+        --rounds 5 --repeats 5 --warmup 2 --device auto \
         --json-out Benchmarks/results/phase21_cuda_gpu_$(date +%F).json \\
         --baseline-json Benchmarks/results/phase21_cuda_cpu_baseline_<date>.json
 
@@ -37,6 +36,11 @@ from pathlib import Path
 W_STFT = 0.4
 W_ISTFT = 0.6
 REGRESSION_PENALTY = 0.05
+LARGE_WORKLOAD_SPEEDUP_TARGET = 1.0
+SPEEDUP_NOISE_TOLERANCE = 0.01
+PROMOTION_SCORE_TARGET = 0.887
+OPT_IN_SCORE_TARGET = 0.82
+GATE_POLICY_VERSION = "phase21-cud007-v1"
 
 # Same workload matrix used in Phase 19/20 benchmarks.
 # Each entry: (label, sr, duration_sec, n_fft, hop_length)
@@ -47,6 +51,8 @@ WORKLOADS = [
     ("medium_1024", 22050, 5.0, 1024,  256),
     ("long_1024",   22050, 20.0, 1024, 256),
 ]
+
+LARGE_WORKLOADS = {"medium_512", "medium_1024", "long_1024"}
 
 
 def _time_workload(
@@ -62,24 +68,25 @@ def _time_workload(
     """Returns (stft_ms, istft_ms) median over `repeats` timed runs."""
     import numpy as np
     try:
-        import iron_librosa as il
+        from librosa._rust_bridge import RUST_AVAILABLE, _rust_ext
     except ImportError:
-        raise SystemExit(
-            "iron_librosa not importable — activate venv and build with maturin first."
-        )
+        raise SystemExit("librosa._rust_bridge not importable — activate env first.")
+
+    if not RUST_AVAILABLE or _rust_ext is None:
+        raise SystemExit("Rust extension unavailable — build with maturin develop first.")
 
     n_samples = int(sr * duration)
     rng = np.random.default_rng(seed=42)
     y = rng.standard_normal(n_samples).astype(np.float32)
 
     # Pre-compute STFT for iSTFT timing (don't count STFT time in iSTFT measurement).
-    S = il.stft_complex(y, n_fft=n_fft, hop_length=hop_length, center=True)
+    S = _rust_ext.stft_complex(y, n_fft, hop_length, True, None)
 
     def _stft():
-        il.stft_complex(y, n_fft=n_fft, hop_length=hop_length, center=True)
+        _rust_ext.stft_complex(y, n_fft, hop_length, True, None)
 
     def _istft():
-        il.istft_f32(S, n_fft=n_fft, hop_length=hop_length)
+        _rust_ext.istft_f32(S, n_fft, hop_length, None, None)
 
     # Warmup
     for _ in range(warmup):
@@ -135,6 +142,8 @@ def _compare_with_baseline(
 ) -> dict:
     stft_speedups, istft_speedups = [], []
     stft_reg, istft_reg = 0, 0
+    stft_near, istft_near = 0, 0
+    regression_floor = 1.0 - SPEEDUP_NOISE_TOLERANCE
     rows = []
     for label, *_ in WORKLOADS:
         cpu_stft, cpu_istft = baseline[label]
@@ -143,10 +152,14 @@ def _compare_with_baseline(
         sp_istft = cpu_istft / cur_istft
         stft_speedups.append(sp_stft)
         istft_speedups.append(sp_istft)
-        if sp_stft < 1.0:
+        if sp_stft < regression_floor:
             stft_reg += 1
-        if sp_istft < 1.0:
+        elif sp_stft < 1.0:
+            stft_near += 1
+        if sp_istft < regression_floor:
             istft_reg += 1
+        elif sp_istft < 1.0:
+            istft_near += 1
         rows.append({
             "workload": label,
             "baseline_stft_ms": cpu_stft,
@@ -159,25 +172,46 @@ def _compare_with_baseline(
 
     mean_stft = statistics.mean(stft_speedups)
     mean_istft = statistics.mean(istft_speedups)
+    large_rows = [row for row in rows if row["workload"] in LARGE_WORKLOADS]
+    mean_large_stft = statistics.mean(r["stft_speedup"] for r in large_rows)
+    mean_large_istft = statistics.mean(r["istft_speedup"] for r in large_rows)
+    large_gate_floor = LARGE_WORKLOAD_SPEEDUP_TARGET - SPEEDUP_NOISE_TOLERANCE
+    large_gate = (
+        mean_large_stft >= large_gate_floor
+        and mean_large_istft >= large_gate_floor
+    )
     regressions = stft_reg + istft_reg
     score = W_STFT * mean_stft + W_ISTFT * mean_istft - REGRESSION_PENALTY * regressions
+    score_pass = score >= PROMOTION_SCORE_TARGET
+    regression_gate = regressions == 0
 
     return {
         "workloads": rows,
         "summary": {
             "mean_stft_speedup": mean_stft,
             "mean_istft_speedup": mean_istft,
+            "mean_large_stft_speedup": mean_large_stft,
+            "mean_large_istft_speedup": mean_large_istft,
             "stft_regressions": stft_reg,
             "istft_regressions": istft_reg,
+            "stft_near_parity": stft_near,
+            "istft_near_parity": istft_near,
             "regressions_total": regressions,
             "score": score,
         },
         "promotion_gate": {
-            "score_target": 0.887,
-            "score_pass": score >= 0.887,
-            "regression_gate": regressions == 0,
-            "decision": "PROMOTE" if score >= 0.887 and regressions == 0
-                        else "OPT-IN" if score >= 0.82
+            "policy_version": GATE_POLICY_VERSION,
+            "score_target": PROMOTION_SCORE_TARGET,
+            "opt_in_score_target": OPT_IN_SCORE_TARGET,
+            "large_workload_speedup_target": LARGE_WORKLOAD_SPEEDUP_TARGET,
+            "speedup_noise_tolerance": SPEEDUP_NOISE_TOLERANCE,
+            "regression_floor": regression_floor,
+            "large_workload_floor": large_gate_floor,
+            "score_pass": score_pass,
+            "regression_gate": regression_gate,
+            "large_workload_gate": large_gate,
+            "decision": "PROMOTE" if score_pass and regression_gate and large_gate
+                        else "OPT-IN" if score >= OPT_IN_SCORE_TARGET
                         else "DEFER",
         },
     }
@@ -223,10 +257,20 @@ def _write_md(path: Path, results: dict, *, device: str, compared: bool) -> None
             f"|---|---:|",
             f"| Mean STFT speedup | {s['mean_stft_speedup']:.3f}x |",
             f"| Mean iSTFT speedup | {s['mean_istft_speedup']:.3f}x |",
+            f"| Mean LARGE STFT speedup | {s['mean_large_stft_speedup']:.3f}x |",
+            f"| Mean LARGE iSTFT speedup | {s['mean_large_istft_speedup']:.3f}x |",
             f"| STFT regressions | {s['stft_regressions']} |",
             f"| iSTFT regressions | {s['istft_regressions']} |",
+            f"| STFT near-parity (<1.0x, >= floor) | {s['stft_near_parity']} |",
+            f"| iSTFT near-parity (<1.0x, >= floor) | {s['istft_near_parity']} |",
             f"| Composite score | {s['score']:.3f} |",
             f"| Score target | {p['score_target']} |",
+            f"| Opt-in score target | {p['opt_in_score_target']} |",
+            f"| Large-workload speedup target | {p['large_workload_speedup_target']:.3f}x |",
+            f"| Speedup noise tolerance | {p['speedup_noise_tolerance']:.3f} |",
+            f"| Regression floor | {p['regression_floor']:.3f}x |",
+            f"| Large-workload floor | {p['large_workload_floor']:.3f}x |",
+            f"| Large-workload gate | {p['large_workload_gate']} |",
             f"| **Decision** | **{p['decision']}** |",
         ]
 
@@ -241,11 +285,11 @@ def main() -> None:
     ap.add_argument("--warmup", type=int, default=2, help="Warmup iterations before timing")
     ap.add_argument(
         "--device", default="cpu",
-        help="Device to benchmark: cpu | cuda-gpu. Default: cpu.",
+        help="Device to benchmark: cpu | auto | cuda-gpu. Default: cpu.",
     )
     ap.add_argument(
         "--cuda-experimental", default="",
-        help="Set IRON_LIBROSA_ENABLE_CUDA_FFT_EXPERIMENTAL (e.g. force-on)",
+        help="Debug-only: set IRON_LIBROSA_ENABLE_CUDA_FFT_EXPERIMENTAL (e.g. force-on)",
     )
     ap.add_argument("--json-out", default=None, help="Write results JSON here")
     ap.add_argument("--md-out", default=None, help="Write results markdown here")
@@ -265,18 +309,37 @@ def main() -> None:
 
     timings = _run_all(rounds=args.rounds, repeats=args.repeats, warmup=args.warmup)
 
+    backend_info = None
+    try:
+        from librosa._rust_bridge import RUST_AVAILABLE, _rust_ext
+
+        if RUST_AVAILABLE and _rust_ext is not None:
+            backend_info = _rust_ext.rust_backend_info()
+    except Exception:
+        backend_info = None
+
     payload: dict = {
         "meta": {
             "phase": 21,
             "device": args.device,
+            "cuda_experimental": args.cuda_experimental or None,
             "rounds": args.rounds,
             "repeats": args.repeats,
             "warmup": args.warmup,
             "workloads": [label for label, *_ in WORKLOADS],
             "score_weights": {"stft": W_STFT, "istft": W_ISTFT, "regression_penalty": REGRESSION_PENALTY},
+            "gate_policy": {
+                "version": GATE_POLICY_VERSION,
+                "score_target": PROMOTION_SCORE_TARGET,
+                "opt_in_score_target": OPT_IN_SCORE_TARGET,
+                "large_workload_speedup_target": LARGE_WORKLOAD_SPEEDUP_TARGET,
+                "speedup_noise_tolerance": SPEEDUP_NOISE_TOLERANCE,
+            },
         },
         "timings": {label: list(vals) for label, vals in timings.items()},
     }
+    if backend_info is not None:
+        payload["backend_info"] = backend_info
 
     compared = False
     if args.baseline_json:
@@ -299,7 +362,10 @@ def main() -> None:
             print(
                 f"  Mean STFT speedup:  {s['mean_stft_speedup']:.3f}x\n"
                 f"  Mean iSTFT speedup: {s['mean_istft_speedup']:.3f}x\n"
+                f"  Mean LARGE STFT speedup:  {s['mean_large_stft_speedup']:.3f}x\n"
+                f"  Mean LARGE iSTFT speedup: {s['mean_large_istft_speedup']:.3f}x\n"
                 f"  Composite score:    {s['score']:.3f}  (target >= {p['score_target']})\n"
+                f"  Large gate:         {p['large_workload_gate']}  (target >= {p['large_workload_speedup_target']:.3f}x)\n"
                 f"  Decision:           {p['decision']}",
                 flush=True,
             )

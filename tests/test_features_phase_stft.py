@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import librosa
+import librosa.feature._spectral_mfcc_mel as mel_feature_mod
 import librosa.feature.spectral as spectral_mod
 import librosa.core.spectrum as core_spectrum_mod
 from librosa._rust_bridge import RUST_AVAILABLE, _rust_ext
@@ -42,6 +43,364 @@ def test_melspectrogram_full_pipeline_matches_reference_from_y():
         power=2.0,
     )
 
+    np.testing.assert_allclose(observed, expected, rtol=1e-5, atol=1e-5)
+
+
+def test_melspectrogram_cuda_fused_dispatch_invokes_extension(monkeypatch):
+    rng = np.random.default_rng(2027)
+    y = rng.standard_normal(4096).astype(np.float32)
+    n_fft = 512
+    hop = 128
+    n_mels = 40
+
+    expected = librosa.filters.mel(
+        sr=22050,
+        n_fft=n_fft,
+        n_mels=n_mels,
+        dtype=np.float32,
+        norm="slaney",
+    ).dot(np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop, center=True)) ** 2)
+
+    calls = {"n": 0}
+
+    def _fake_fused(y_in, n_fft_in, hop_in, center_in, window_in, mel_basis_in):
+        calls["n"] += 1
+        assert y_in.dtype == np.float32
+        assert window_in.dtype == np.float32
+        assert mel_basis_in.dtype == np.float32
+        assert n_fft_in == n_fft
+        assert hop_in == hop
+        assert center_in is True
+        return expected
+
+    monkeypatch.setenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "1")
+    monkeypatch.setattr(mel_feature_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(mel_feature_mod, "FORCE_NUMPY_MEL", False)
+    monkeypatch.setattr(
+        mel_feature_mod,
+        "_rust_ext",
+        types.SimpleNamespace(
+            melspectrogram_fused_f32=_fake_fused,
+            rust_backend_info=lambda: {"resolved": "cuda-gpu"},
+        ),
+    )
+
+    observed = mel_feature_mod.melspectrogram(
+        y=y,
+        sr=22050,
+        n_fft=n_fft,
+        hop_length=hop,
+        n_mels=n_mels,
+        dtype=np.float32,
+        norm="slaney",
+        power=2.0,
+    )
+
+    assert calls["n"] == 1
+    np.testing.assert_allclose(observed, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_melspectrogram_cuda_fused_dispatch_falls_back_on_error(monkeypatch):
+    rng = np.random.default_rng(2028)
+    y = rng.standard_normal(4096).astype(np.float32)
+    n_fft = 512
+    hop = 128
+    n_mels = 40
+
+    expected = librosa.filters.mel(
+        sr=22050,
+        n_fft=n_fft,
+        n_mels=n_mels,
+        dtype=np.float32,
+        norm="slaney",
+    ).dot(np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop, center=True)) ** 2)
+
+    def _raising_fused(*_args, **_kwargs):
+        raise RuntimeError("simulated fused CUDA failure")
+
+    monkeypatch.setenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "1")
+    monkeypatch.setattr(mel_feature_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(mel_feature_mod, "FORCE_NUMPY_MEL", False)
+    monkeypatch.setattr(
+        mel_feature_mod,
+        "_rust_ext",
+        types.SimpleNamespace(
+            melspectrogram_fused_f32=_raising_fused,
+            rust_backend_info=lambda: {"resolved": "cuda-gpu"},
+        ),
+    )
+
+    observed = mel_feature_mod.melspectrogram(
+        y=y,
+        sr=22050,
+        n_fft=n_fft,
+        hop_length=hop,
+        n_mels=n_mels,
+        dtype=np.float32,
+        norm="slaney",
+        power=2.0,
+    )
+
+    np.testing.assert_allclose(observed, expected, rtol=1e-5, atol=1e-5)
+
+
+def test_melspectrogram_cuda_fused_dispatch_rejects_non_cuda_backend(monkeypatch):
+    rng = np.random.default_rng(2029)
+    y = rng.standard_normal(4096).astype(np.float32)
+
+    calls = {"n": 0}
+
+    def _fake_fused(*_args, **_kwargs):
+        calls["n"] += 1
+        raise AssertionError("fused path should not be called when backend is not cuda-gpu")
+
+    monkeypatch.setenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "1")
+    monkeypatch.setattr(mel_feature_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(mel_feature_mod, "FORCE_NUMPY_MEL", False)
+    monkeypatch.setattr(
+        mel_feature_mod,
+        "_rust_ext",
+        types.SimpleNamespace(
+            melspectrogram_fused_f32=_fake_fused,
+            rust_backend_info=lambda: {"resolved": "cpu"},
+        ),
+    )
+
+    observed = mel_feature_mod.melspectrogram(
+        y=y,
+        sr=22050,
+        n_fft=512,
+        hop_length=128,
+        n_mels=40,
+        dtype=np.float32,
+        norm="slaney",
+        power=2.0,
+    )
+
+    assert calls["n"] == 0
+    assert observed.shape[0] == 40
+
+
+def test_melspectrogram_cuda_fused_dispatch_supports_nondefault_win_length(monkeypatch):
+    rng = np.random.default_rng(2030)
+    y = rng.standard_normal(4096).astype(np.float32)
+    n_fft = 512
+    win_length = 400
+
+    calls = {"n": 0}
+
+    def _fake_fused(_y, n_fft_in, _hop, _center, window_in, mel_basis_in):
+        calls["n"] += 1
+        assert n_fft_in == n_fft
+        assert window_in.shape[0] == n_fft
+        assert mel_basis_in.shape[1] == n_fft // 2 + 1
+        return np.zeros((mel_basis_in.shape[0], 33), dtype=np.float32)
+
+    monkeypatch.setenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "1")
+    monkeypatch.setattr(mel_feature_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(mel_feature_mod, "FORCE_NUMPY_MEL", False)
+    monkeypatch.setattr(
+        mel_feature_mod,
+        "_rust_ext",
+        types.SimpleNamespace(
+            melspectrogram_fused_f32=_fake_fused,
+            rust_backend_info=lambda: {"resolved": "cuda-gpu"},
+        ),
+    )
+
+    _ = mel_feature_mod.melspectrogram(
+        y=y,
+        sr=22050,
+        n_fft=n_fft,
+        hop_length=128,
+        win_length=win_length,
+        n_mels=40,
+        dtype=np.float32,
+        norm="slaney",
+        power=2.0,
+    )
+
+    assert calls["n"] == 1
+
+
+def test_melspectrogram_cuda_fused_dispatch_multichannel(monkeypatch):
+    rng = np.random.default_rng(2031)
+    y = rng.standard_normal((2, 4096)).astype(np.float32)
+    n_fft = 512
+    hop = 128
+    n_mels = 40
+
+    expected = []
+    for ch in range(y.shape[0]):
+        spec = np.abs(librosa.stft(y[ch], n_fft=n_fft, hop_length=hop, center=True)) ** 2
+        mel_basis = librosa.filters.mel(
+            sr=22050,
+            n_fft=n_fft,
+            n_mels=n_mels,
+            dtype=np.float32,
+            norm="slaney",
+        )
+        expected.append(mel_basis.dot(spec))
+    expected = np.stack(expected, axis=0)
+
+    calls = {"n": 0}
+
+    def _fake_fused(y_in, n_fft_in, hop_in, center_in, _window_in, mel_basis_in):
+        out = mel_basis_in.dot(np.abs(librosa.stft(y_in, n_fft=n_fft_in, hop_length=hop_in, center=center_in)) ** 2)
+        calls["n"] += 1
+        return out.astype(np.float32, copy=False)
+
+    monkeypatch.setenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "1")
+    monkeypatch.setattr(mel_feature_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(mel_feature_mod, "FORCE_NUMPY_MEL", False)
+    monkeypatch.setattr(
+        mel_feature_mod,
+        "_rust_ext",
+        types.SimpleNamespace(
+            melspectrogram_fused_f32=_fake_fused,
+            rust_backend_info=lambda: {"resolved": "cuda-gpu"},
+        ),
+    )
+
+    observed = mel_feature_mod.melspectrogram(
+        y=y,
+        sr=22050,
+        n_fft=n_fft,
+        hop_length=hop,
+        n_mels=n_mels,
+        dtype=np.float32,
+        norm="slaney",
+        power=2.0,
+    )
+
+    assert calls["n"] == y.shape[0]
+    np.testing.assert_allclose(observed, expected, rtol=1e-5, atol=1e-5)
+
+
+def test_melspectrogram_cuda_fused_dispatch_multichannel_prefers_batch(monkeypatch):
+    rng = np.random.default_rng(2032)
+    y = rng.standard_normal((3, 4096)).astype(np.float32)
+    n_fft = 512
+    hop = 128
+    n_mels = 40
+
+    expected = []
+    for ch in range(y.shape[0]):
+        spec = np.abs(librosa.stft(y[ch], n_fft=n_fft, hop_length=hop, center=True)) ** 2
+        mel_basis = librosa.filters.mel(
+            sr=22050,
+            n_fft=n_fft,
+            n_mels=n_mels,
+            dtype=np.float32,
+            norm="slaney",
+        )
+        expected.append(mel_basis.dot(spec))
+    expected = np.stack(expected, axis=0)
+
+    calls = {"single": 0, "batch": 0}
+
+    def _single_should_not_run(*_args, **_kwargs):
+        calls["single"] += 1
+        raise AssertionError("single fused path should not run when batch path is available")
+
+    def _fake_batch_fused(y_batch, n_fft_in, hop_in, center_in, _window_in, mel_basis_in):
+        calls["batch"] += 1
+        out = []
+        for ch in range(y_batch.shape[0]):
+            spec = np.abs(
+                librosa.stft(y_batch[ch], n_fft=n_fft_in, hop_length=hop_in, center=center_in)
+            ) ** 2
+            out.append(mel_basis_in.dot(spec).astype(np.float32, copy=False))
+        return np.stack(out, axis=0)
+
+    monkeypatch.setenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "1")
+    monkeypatch.setattr(mel_feature_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(mel_feature_mod, "FORCE_NUMPY_MEL", False)
+    monkeypatch.setattr(
+        mel_feature_mod,
+        "_rust_ext",
+        types.SimpleNamespace(
+            melspectrogram_fused_f32=_single_should_not_run,
+            melspectrogram_fused_batch_f32=_fake_batch_fused,
+            rust_backend_info=lambda: {"resolved": "cuda-gpu"},
+        ),
+    )
+
+    observed = mel_feature_mod.melspectrogram(
+        y=y,
+        sr=22050,
+        n_fft=n_fft,
+        hop_length=hop,
+        n_mels=n_mels,
+        dtype=np.float32,
+        norm="slaney",
+        power=2.0,
+    )
+
+    assert calls["batch"] == 1
+    assert calls["single"] == 0
+    np.testing.assert_allclose(observed, expected, rtol=1e-5, atol=1e-5)
+
+
+def test_melspectrogram_cuda_fused_dispatch_multichannel_batch_fallback_to_single(monkeypatch):
+    rng = np.random.default_rng(2033)
+    y = rng.standard_normal((2, 4096)).astype(np.float32)
+    n_fft = 512
+    hop = 128
+    n_mels = 40
+
+    expected = []
+    for ch in range(y.shape[0]):
+        spec = np.abs(librosa.stft(y[ch], n_fft=n_fft, hop_length=hop, center=True)) ** 2
+        mel_basis = librosa.filters.mel(
+            sr=22050,
+            n_fft=n_fft,
+            n_mels=n_mels,
+            dtype=np.float32,
+            norm="slaney",
+        )
+        expected.append(mel_basis.dot(spec))
+    expected = np.stack(expected, axis=0)
+
+    calls = {"single": 0, "batch": 0}
+
+    def _batch_raises(*_args, **_kwargs):
+        calls["batch"] += 1
+        raise RuntimeError("simulated batch fused failure")
+
+    def _single_fused(y_in, n_fft_in, hop_in, center_in, _window_in, mel_basis_in):
+        calls["single"] += 1
+        spec = np.abs(
+            librosa.stft(y_in, n_fft=n_fft_in, hop_length=hop_in, center=center_in)
+        ) ** 2
+        return mel_basis_in.dot(spec).astype(np.float32, copy=False)
+
+    monkeypatch.setenv("IRON_LIBROSA_CUDA_MEL_FUSED_EXPERIMENTAL", "1")
+    monkeypatch.setattr(mel_feature_mod, "RUST_AVAILABLE", True)
+    monkeypatch.setattr(mel_feature_mod, "FORCE_NUMPY_MEL", False)
+    monkeypatch.setattr(
+        mel_feature_mod,
+        "_rust_ext",
+        types.SimpleNamespace(
+            melspectrogram_fused_f32=_single_fused,
+            melspectrogram_fused_batch_f32=_batch_raises,
+            rust_backend_info=lambda: {"resolved": "cuda-gpu"},
+        ),
+    )
+
+    observed = mel_feature_mod.melspectrogram(
+        y=y,
+        sr=22050,
+        n_fft=n_fft,
+        hop_length=hop,
+        n_mels=n_mels,
+        dtype=np.float32,
+        norm="slaney",
+        power=2.0,
+    )
+
+    assert calls["batch"] == 1
+    assert calls["single"] == y.shape[0]
     np.testing.assert_allclose(observed, expected, rtol=1e-5, atol=1e-5)
 
 

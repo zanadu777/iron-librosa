@@ -87,6 +87,76 @@ def test_istft_f64_device_override_matches_cpu(monkeypatch):
 
 
 @pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
+def test_istft_f32_win_length_matches_librosa_center_false(monkeypatch):
+    import librosa.core._spectrum_stft as _spectrum_stft
+
+    monkeypatch.setattr(_spectrum_stft, "RUST_AVAILABLE", False)
+    monkeypatch.setattr(_spectrum_stft, "FORCE_RUST_STFT", False)
+
+    rng = np.random.default_rng(44003)
+    y = rng.standard_normal(4096).astype(np.float32)
+    n_fft = 1024
+    hop = 256
+    win_length = 640
+
+    d = _spectrum_stft.stft(y, n_fft=n_fft, hop_length=hop, win_length=win_length, center=False)
+    d = d.astype(np.complex64)
+
+    out_rust = _rust_ext.istft_f32(d, n_fft=n_fft, hop_length=hop, win_length=win_length, window=None)
+    out_py = _spectrum_stft.istft(d, n_fft=n_fft, hop_length=hop, win_length=win_length, center=False)
+
+    np.testing.assert_allclose(out_rust, out_py.astype(np.float32), rtol=2e-3, atol=1e-3)
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
+def test_istft_f64_win_length_matches_librosa_center_false(monkeypatch):
+    import librosa.core._spectrum_stft as _spectrum_stft
+
+    monkeypatch.setattr(_spectrum_stft, "RUST_AVAILABLE", False)
+    monkeypatch.setattr(_spectrum_stft, "FORCE_RUST_STFT", False)
+
+    rng = np.random.default_rng(44004)
+    y = rng.standard_normal(4096).astype(np.float64)
+    n_fft = 1024
+    hop = 256
+    win_length = 640
+
+    d = _spectrum_stft.stft(y, n_fft=n_fft, hop_length=hop, win_length=win_length, center=False)
+    d = d.astype(np.complex128)
+
+    out_rust = _rust_ext.istft_f64(d, n_fft=n_fft, hop_length=hop, win_length=win_length, window=None)
+    out_py = _spectrum_stft.istft(d, n_fft=n_fft, hop_length=hop, win_length=win_length, center=False)
+
+    np.testing.assert_allclose(out_rust, out_py.astype(np.float64), rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
+def test_istft_f32_rejects_window_length_mismatch():
+    rng = np.random.default_rng(44005)
+    d = (
+        rng.standard_normal((513, 8)).astype(np.float32)
+        + 1j * rng.standard_normal((513, 8)).astype(np.float32)
+    )
+    bad_window = np.hanning(1024).astype(np.float32)
+
+    with pytest.raises(ValueError, match="Window length"):
+        _rust_ext.istft_f32(d, n_fft=1024, hop_length=256, win_length=640, window=bad_window)
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
+def test_istft_f64_rejects_window_length_mismatch():
+    rng = np.random.default_rng(44006)
+    d = (
+        rng.standard_normal((513, 8)).astype(np.float64)
+        + 1j * rng.standard_normal((513, 8)).astype(np.float64)
+    )
+    bad_window = np.hanning(1024).astype(np.float64)
+
+    with pytest.raises(ValueError, match="Window length"):
+        _rust_ext.istft_f64(d, n_fft=1024, hop_length=256, win_length=640, window=bad_window)
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust extension not available")
 class TestPowerToDbF32:
     """Test power_to_db float32 kernel"""
 

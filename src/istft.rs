@@ -57,6 +57,71 @@ fn fft_gpu_min_frames() -> usize {
     })
 }
 
+fn fft_cuda_min_work_threshold() -> usize {
+    static THRESHOLD: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *THRESHOLD.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_CUDA_FFT_MIN_WORK_THRESHOLD")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            // Phase 21 CUD-006 safety retune:
+            // Keep auto mode conservative until CUDA path is consistently faster.
+            // Phase 21 CUD-007 safety retune to keep Auto conservative until
+            // CUDA iSTFT shows stable wins across medium/long workloads.
+            .unwrap_or(30_000_000)
+    })
+}
+
+fn fft_cuda_min_frames() -> usize {
+    static MIN_FRAMES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN_FRAMES.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_CUDA_FFT_MIN_FRAMES")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            // Safety gate for auto mode.
+            .unwrap_or(1024)
+    })
+}
+
+/// Debug-only override for local benchmarking.
+/// Normal drop-in dispatch must not require this to use CUDA.
+fn cuda_debug_force_on() -> bool {
+    static FORCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FORCE.get_or_init(|| {
+        matches!(
+            std::env::var("IRON_LIBROSA_ENABLE_CUDA_FFT_EXPERIMENTAL")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "force-on" | "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn cuda_c2r_istft_experimental() -> bool {
+    static FORCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FORCE.get_or_init(|| {
+        matches!(
+            std::env::var("IRON_LIBROSA_CUDA_C2R_ISTFT_EXPERIMENTAL")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn fft_cuda_max_work() -> Option<usize> {
+    static MAX_WORK: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *MAX_WORK.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_CUDA_MAX_WORK")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .filter(|v| *v > 0)
+    })
+}
+
 // ── per-thread state ──────────────────────────────────────────────────────────
 // Thread-local FFT plan and scratch buffers for f32 and f64
 
@@ -80,6 +145,9 @@ thread_local! {
     });
     static TL_ISTFT_BUF_F32: RefCell<Vec<Complex<f32>>> = const { RefCell::new(Vec::new()) };
     static TL_ISTFT_SCRATCH_F32: RefCell<Vec<Complex<f32>>> = const { RefCell::new(Vec::new()) };
+    static TL_ISTFT_GPU_FULL_F32: RefCell<Vec<Complex<f32>>> = const { RefCell::new(Vec::new()) };
+    static TL_ISTFT_GPU_HALF_F32: RefCell<Vec<Complex<f32>>> = const { RefCell::new(Vec::new()) };
+    static TL_ISTFT_GPU_REAL_F32: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
 
     static TL_ISTFT_PLAN_F64: RefCell<IstftPlanF64> = RefCell::new(IstftPlanF64 {
         planner: FftPlanner::new(),
@@ -137,24 +205,15 @@ pub fn istft_f32<'py>(
     }
 
     let win_length = win_length.unwrap_or(n_fft);
+    if win_length == 0 {
+        return Err(PyValueError::new_err("win_length must be >= 1"));
+    }
     if win_length > n_fft {
         return Err(PyValueError::new_err("win_length must be <= n_fft"));
     }
 
-    // Get or build window
-    let window_vec: Vec<f32> = if let Some(w) = window {
-        let w_slice = w.as_slice()?;
-        if w_slice.len() != n_fft {
-            return Err(PyValueError::new_err(format!(
-                "Window length {} != n_fft {}",
-                w_slice.len(),
-                n_fft
-            )));
-        }
-        w_slice.to_vec()
-    } else {
-        hann_window_f32(n_fft)
-    };
+    // Build librosa-compatible synthesis window: length win_length, centered/padded to n_fft.
+    let window_vec = build_istft_window_f32(n_fft, win_length, window)?;
 
     // Compute expected output length (assuming center=False, no trimming)
     let expected_len = n_fft + hop_length * (n_frames.saturating_sub(1));
@@ -171,18 +230,28 @@ pub fn istft_f32<'py>(
     let work_size = n_frames
         .saturating_mul(n_fft)
         .saturating_mul((n_fft as f32).log2() as usize);
+    let cuda_allowed = fft_cuda_max_work().map(|mx| work_size <= mx).unwrap_or(true);
+    let cuda_force = cuda_debug_force_on();
     let use_gpu = match requested_device {
         RustDevice::AppleGpu => {
-            resolved_device == RustDevice::AppleGpu && n_frames >= fft_gpu_min_frames()
-        }
-        RustDevice::Auto => {
             resolved_device == RustDevice::AppleGpu
-                && work_size >= fft_gpu_work_threshold()
-                && n_frames >= fft_gpu_min_frames()
         }
+        RustDevice::Auto => match resolved_device {
+            RustDevice::AppleGpu => {
+                work_size >= fft_gpu_work_threshold() && n_frames >= fft_gpu_min_frames()
+            }
+            RustDevice::CudaGpu => {
+                (cuda_force || (work_size >= fft_cuda_min_work_threshold()
+                    && n_frames >= fft_cuda_min_frames()))
+                    && cuda_allowed
+            }
+            _ => false,
+        },
         RustDevice::Cpu => false,
-        // Phase 21 stub: CUDA not yet implemented; route to CPU.
-        RustDevice::CudaGpu => false,
+        RustDevice::CudaGpu => {
+            resolved_device == RustDevice::CudaGpu
+                && cuda_allowed
+        }
     };
 
     let mut ifft_ms = 0.0f64;
@@ -190,9 +259,63 @@ pub fn istft_f32<'py>(
     let mut ifft_frame_cpu = vec![0.0f32; n_fft];
 
     let mut ifft_gpu_batch: Option<Vec<Complex<f32>>> = None;
+    let mut ifft_gpu_real_batch: Option<Vec<f32>> = None;
+    let mut gpu_half_spectrum: Option<Vec<Complex<f32>>> = None;
     if use_gpu {
         let ifft_start = std::time::Instant::now();
-        ifft_gpu_batch = Some(inverse_fft_f32_gpu_batch_complex(&stft_slice, n_fft));
+        if resolved_device == RustDevice::CudaGpu && cuda_c2r_istft_experimental() {
+            let half_needed = n_frames * n_bins;
+            let mut half_spectrum = TL_ISTFT_GPU_HALF_F32.with(|cell| {
+                let mut cached = cell.borrow_mut();
+                let mut buf = std::mem::take(&mut *cached);
+                if buf.len() != half_needed {
+                    buf.resize(half_needed, Complex::new(0.0f32, 0.0f32));
+                }
+                buf
+            });
+            for frame_idx in 0..n_frames {
+                let off = frame_idx * n_bins;
+                for i in 0..n_bins {
+                    half_spectrum[off + i] = stft_slice[(i, frame_idx)];
+                }
+            }
+
+            let real_needed = n_frames * n_fft;
+            let mut real_batch = TL_ISTFT_GPU_REAL_F32.with(|cell| {
+                let mut cached = cell.borrow_mut();
+                let mut buf = std::mem::take(&mut *cached);
+                if buf.len() != real_needed {
+                    buf.resize(real_needed, 0.0f32);
+                }
+                buf
+            });
+
+            let _ = crate::cuda_fft::fft_inverse_real_batched_chunked_with_fallback(
+                &half_spectrum,
+                &mut real_batch,
+                n_fft,
+                n_frames,
+            );
+            gpu_half_spectrum = Some(half_spectrum);
+            ifft_gpu_real_batch = Some(real_batch);
+        } else {
+            let needed = n_frames * n_fft;
+            let mut full_spectrum = TL_ISTFT_GPU_FULL_F32.with(|cell| {
+                let mut cached = cell.borrow_mut();
+                let mut buf = std::mem::take(&mut *cached);
+                if buf.len() != needed {
+                    buf.resize(needed, Complex::new(0.0f32, 0.0f32));
+                }
+                buf
+            });
+            inverse_fft_f32_gpu_batch_complex_into(
+                &stft_slice,
+                n_fft,
+                resolved_device,
+                &mut full_spectrum,
+            );
+            ifft_gpu_batch = Some(full_spectrum);
+        }
         ifft_ms += ifft_start.elapsed().as_secs_f64() * 1000.0;
     }
 
@@ -208,7 +331,15 @@ pub fn istft_f32<'py>(
         // Window and overlap-add
         let overlap_start = std::time::Instant::now();
         let start_sample = frame_idx * hop_length;
-        if let Some(gpu_batch) = ifft_gpu_batch.as_ref() {
+        if let Some(gpu_real) = ifft_gpu_real_batch.as_ref() {
+            let frame_off = frame_idx * n_fft;
+            let scale = 1.0f32 / n_fft as f32;
+            for i in 0..n_fft {
+                let idx = start_sample + i;
+                overlap_buf[idx] += gpu_real[frame_off + i] * scale * window_vec[i];
+                norm_buf[idx] += window_sq[i];
+            }
+        } else if let Some(gpu_batch) = ifft_gpu_batch.as_ref() {
             let frame_off = frame_idx * n_fft;
             let scale = 1.0f32 / n_fft as f32;
             for i in 0..n_fft {
@@ -229,7 +360,7 @@ pub fn istft_f32<'py>(
     // Normalize by window sum-of-squares
     let normalize_start = std::time::Instant::now();
     for i in 0..expected_len {
-        if norm_buf[i] > 1e-8 {
+        if norm_buf[i] > f32::MIN_POSITIVE {
             overlap_buf[i] /= norm_buf[i];
         }
     }
@@ -249,6 +380,24 @@ pub fn istft_f32<'py>(
             overlap_add_ms,
             normalize_ms,
         );
+    }
+
+    if use_gpu {
+        if let Some(half) = gpu_half_spectrum.take() {
+            TL_ISTFT_GPU_HALF_F32.with(|cell| {
+                *cell.borrow_mut() = half;
+            });
+        }
+        if let Some(real) = ifft_gpu_real_batch.take() {
+            TL_ISTFT_GPU_REAL_F32.with(|cell| {
+                *cell.borrow_mut() = real;
+            });
+        }
+        if let Some(full_spectrum) = ifft_gpu_batch.take() {
+            TL_ISTFT_GPU_FULL_F32.with(|cell| {
+                *cell.borrow_mut() = full_spectrum;
+            });
+        }
     }
 
     Ok(Array1::from_vec(overlap_buf).into_pyarray_bound(py).to_owned())
@@ -285,23 +434,15 @@ pub fn istft_f64<'py>(
     }
 
     let win_length = win_length.unwrap_or(n_fft);
+    if win_length == 0 {
+        return Err(PyValueError::new_err("win_length must be >= 1"));
+    }
     if win_length > n_fft {
         return Err(PyValueError::new_err("win_length must be <= n_fft"));
     }
 
-    let window_vec: Vec<f64> = if let Some(w) = window {
-        let w_slice = w.as_slice()?;
-        if w_slice.len() != n_fft {
-            return Err(PyValueError::new_err(format!(
-                "Window length {} != n_fft {}",
-                w_slice.len(),
-                n_fft
-            )));
-        }
-        w_slice.to_vec()
-    } else {
-        hann_window_f64(n_fft)
-    };
+    // Build librosa-compatible synthesis window: length win_length, centered/padded to n_fft.
+    let window_vec = build_istft_window_f64(n_fft, win_length, window)?;
 
     let expected_len = n_fft + hop_length * (n_frames.saturating_sub(1));
 
@@ -324,7 +465,7 @@ pub fn istft_f64<'py>(
     }
 
     for i in 0..expected_len {
-        if norm_buf[i] > 1e-10 {
+        if norm_buf[i] > f64::MIN_POSITIVE {
             overlap_buf[i] /= norm_buf[i];
         }
     }
@@ -349,16 +490,85 @@ fn hann_window_f64(n: usize) -> Vec<f64> {
         .collect()
 }
 
+fn build_istft_window_f32(
+    n_fft: usize,
+    win_length: usize,
+    window: Option<PyReadonlyArray1<'_, f32>>,
+) -> PyResult<Vec<f32>> {
+    let base_window: Vec<f32> = if let Some(w) = window {
+        let w_slice = w.as_slice()?;
+        if w_slice.len() != win_length {
+            return Err(PyValueError::new_err(format!(
+                "Window length {} != win_length {}",
+                w_slice.len(),
+                win_length
+            )));
+        }
+        w_slice.to_vec()
+    } else {
+        hann_window_f32(win_length)
+    };
+
+    Ok(pad_center_f32(&base_window, n_fft))
+}
+
+fn build_istft_window_f64(
+    n_fft: usize,
+    win_length: usize,
+    window: Option<PyReadonlyArray1<'_, f64>>,
+) -> PyResult<Vec<f64>> {
+    let base_window: Vec<f64> = if let Some(w) = window {
+        let w_slice = w.as_slice()?;
+        if w_slice.len() != win_length {
+            return Err(PyValueError::new_err(format!(
+                "Window length {} != win_length {}",
+                w_slice.len(),
+                win_length
+            )));
+        }
+        w_slice.to_vec()
+    } else {
+        hann_window_f64(win_length)
+    };
+
+    Ok(pad_center_f64(&base_window, n_fft))
+}
+
+fn pad_center_f32(window: &[f32], size: usize) -> Vec<f32> {
+    if window.len() == size {
+        return window.to_vec();
+    }
+    let mut out = vec![0.0f32; size];
+    let start = (size - window.len()) / 2;
+    out[start..start + window.len()].copy_from_slice(window);
+    out
+}
+
+fn pad_center_f64(window: &[f64], size: usize) -> Vec<f64> {
+    if window.len() == size {
+        return window.to_vec();
+    }
+    let mut out = vec![0.0f64; size];
+    let start = (size - window.len()) / 2;
+    out[start..start + window.len()].copy_from_slice(window);
+    out
+}
+
 /// Inverse FFT for f32 using Metal GPU with CPU fallback.
 /// Mirrors negative frequencies for all frames and runs batched inverse FFT.
 /// Returns complex time-domain frames (unscaled, rustfft inverse semantics).
-fn inverse_fft_f32_gpu_batch_complex(
+fn inverse_fft_f32_gpu_batch_complex_into(
     stft_matrix: &ndarray::ArrayView2<Complex<f32>>,
     n_fft: usize,
-) -> Vec<Complex<f32>> {
+    resolved_device: RustDevice,
+    full_spectrum: &mut Vec<Complex<f32>>,
+) {
     let n_bins = stft_matrix.shape()[0];
     let n_frames = stft_matrix.shape()[1];
-    let mut full_spectrum = vec![Complex::new(0.0f32, 0.0f32); n_frames * n_fft];
+    let needed = n_frames * n_fft;
+    if full_spectrum.len() != needed {
+        full_spectrum.resize(needed, Complex::new(0.0f32, 0.0f32));
+    }
 
     for frame_idx in 0..n_frames {
         let frame_off = frame_idx * n_fft;
@@ -377,14 +587,24 @@ fn inverse_fft_f32_gpu_batch_complex(
         }
     }
 
-    // Try batched Metal GPU inverse FFT; fall back to CPU on any failure.
-    let _ = crate::metal_fft::fft_inverse_batched_chunked_with_fallback(
-        &mut full_spectrum,
-        n_fft,
-        n_frames,
-    );
-
-    full_spectrum
+    // Try backend GPU inverse FFT; each backend wrapper falls back to CPU.
+    match resolved_device {
+        RustDevice::AppleGpu => {
+            let _ = crate::metal_fft::fft_inverse_batched_chunked_with_fallback(
+                full_spectrum,
+                n_fft,
+                n_frames,
+            );
+        }
+        RustDevice::CudaGpu => {
+            let _ = crate::cuda_fft::fft_inverse_batched_chunked_with_fallback(
+                full_spectrum,
+                n_fft,
+                n_frames,
+            );
+        }
+        _ => {}
+    }
 }
 
 fn inverse_fft_f32_into(

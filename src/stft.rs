@@ -52,7 +52,74 @@ fn fft_gpu_min_frames() -> usize {
         std::env::var("IRON_LIBROSA_FFT_GPU_MIN_FRAMES")
             .ok()
             .and_then(|s| s.trim().parse::<usize>().ok())
-            .unwrap_or(200)  // Phase 20: Changed from 0 to 200 (Phase 19 A/B winner)
+            .unwrap_or(200)
+    })
+}
+
+fn fft_cuda_min_work_threshold() -> usize {
+    static THRESHOLD: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *THRESHOLD.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_CUDA_FFT_MIN_WORK_THRESHOLD")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            // Phase 21 CUD-007 safety retune:
+            // Benchmarks on current hosts still show regressions through ~19M work
+            // for explicit CUDA runs, so keep Auto mode stricter by default.
+            // Explicit `cuda-gpu` mode remains unchanged.
+            .unwrap_or(30_000_000)
+    })
+}
+
+fn fft_cuda_min_frames() -> usize {
+    static MIN_FRAMES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN_FRAMES.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_CUDA_FFT_MIN_FRAMES")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            // Safety gate for auto mode: only dispatch larger batches by default.
+            .unwrap_or(1024)
+    })
+}
+
+/// Debug-only override for local benchmarking.
+/// Normal drop-in dispatch must not require this to use CUDA.
+fn cuda_debug_force_on() -> bool {
+    static FORCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FORCE.get_or_init(|| {
+        matches!(
+            std::env::var("IRON_LIBROSA_ENABLE_CUDA_FFT_EXPERIMENTAL")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "force-on" | "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn cuda_r2c_pack_experimental() -> bool {
+    // R2C is now the default CUDA STFT path (halves H2D transfer vs C2C).
+    // Opt out with IRON_LIBROSA_CUDA_R2C_PACK_EXPERIMENTAL=0.
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        !matches!(
+            std::env::var("IRON_LIBROSA_CUDA_R2C_PACK_EXPERIMENTAL")
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "0" | "false" | "no" | "off"
+        )
+    })
+}
+
+fn fft_cuda_max_work() -> Option<usize> {
+    static MAX_WORK: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *MAX_WORK.get_or_init(|| {
+        std::env::var("IRON_LIBROSA_CUDA_MAX_WORK")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .filter(|v| *v > 0)
     })
 }
 
@@ -83,6 +150,9 @@ thread_local! {
     });
     static TL_BUF:     RefCell<Vec<Complex<f32>>> = const { RefCell::new(Vec::new()) };
     static TL_SCRATCH: RefCell<Vec<Complex<f32>>> = const { RefCell::new(Vec::new()) };
+    static TL_STFT_GPU_BATCH_BUF: RefCell<Vec<Complex<f32>>> = const { RefCell::new(Vec::new()) };
+    static TL_STFT_GPU_BATCH_REAL_BUF: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+    static TL_STFT_GPU_BATCH_R2C_BUF: RefCell<Vec<Complex<f32>>> = const { RefCell::new(Vec::new()) };
 
     static TL_PLAN_F64: RefCell<TlPlanF64> = RefCell::new(TlPlanF64 {
         planner: FftPlanner::new(),
@@ -300,24 +370,37 @@ pub fn stft_complex<'py>(
         Arc::new(hann_window(n_fft))
     };
 
-    // ── GPU dispatch (AppleGpu) ───────────────────────────────────────────────
-    // When apple-gpu device is requested, use Metal FFT (if available / enabled)
-    // with an automatic CPU fallback via fft_forward_with_fallback.
+    // ── GPU dispatch ───────────────────────────────────────────────────────────
+    // Supports Apple GPU (Metal) and CUDA GPU (PC/NVIDIA), both with automatic
+    // CPU fallback through backend-specific *_with_fallback wrappers.
     // Falls back to Rayon CPU path when Auto mode doesn't meet work threshold.
     // Phase 20: Added min_frames gate (default 200) to reduce small-batch dispatch overhead.
     let requested_device = requested_rust_device();
     let resolved_device = resolved_rust_device();
-    let work_size = n_frames
-        .saturating_mul(n_fft)
-        .saturating_mul((n_fft as f32).log2() as usize);
+    let log2n = (n_fft as f32).log2() as usize;
+    let work_size = n_frames.saturating_mul(n_fft).saturating_mul(log2n);
+    let cuda_allowed = fft_cuda_max_work().map(|mx| work_size <= mx).unwrap_or(true);
+    let cuda_force = cuda_debug_force_on();
     let use_gpu = match requested_device {
-        RustDevice::AppleGpu => resolved_device == RustDevice::AppleGpu && n_frames >= fft_gpu_min_frames(),
-        RustDevice::Auto => {
-            resolved_device == RustDevice::AppleGpu && work_size >= fft_gpu_work_threshold() && n_frames >= fft_gpu_min_frames()
+        RustDevice::AppleGpu => {
+            resolved_device == RustDevice::AppleGpu
         }
+        RustDevice::Auto => match resolved_device {
+             RustDevice::AppleGpu => {
+                work_size >= fft_gpu_work_threshold() && n_frames >= fft_gpu_min_frames()
+             }
+             RustDevice::CudaGpu => {
+                (cuda_force || (work_size >= fft_cuda_min_work_threshold()
+                    && n_frames >= fft_cuda_min_frames()))
+                    && cuda_allowed
+             }
+            _ => false,
+        },
         RustDevice::Cpu => false,
-        // Phase 21 stub: CUDA GPU dispatch not yet implemented; route to CPU.
-        RustDevice::CudaGpu => false,
+        RustDevice::CudaGpu => {
+            resolved_device == RustDevice::CudaGpu
+                && cuda_allowed
+        }
     };
 
     if use_gpu {
@@ -325,30 +408,121 @@ pub fn stft_complex<'py>(
         let gpu_start = std::time::Instant::now();
         let mut out = ndarray::Array2::<Complex<f32>>::zeros((n_bins, n_frames));
         let win = &*window;
-        let mut batch_buf = vec![Complex::<f32>::default(); n_frames * n_fft];
 
-        for frame_idx in 0..n_frames {
-            let start = frame_idx * hop_length;
-            let frame_off = frame_idx * n_fft;
-            for k in 0..n_fft {
-                batch_buf[frame_off + k] = Complex::new(y_padded[start + k] * win[k], 0.0);
+        if resolved_device == RustDevice::CudaGpu && cuda_r2c_pack_experimental() {
+            let needed_spec = n_frames * n_bins;
+
+            let mut spec_batch = TL_STFT_GPU_BATCH_R2C_BUF.with(|cell| {
+                let mut cached = cell.borrow_mut();
+                let mut buf = std::mem::take(&mut *cached);
+                if buf.len() != needed_spec {
+                    buf.resize(needed_spec, Complex::<f32>::default());
+                }
+                buf
+            });
+
+            let _ = crate::cuda_fft::fft_forward_real_from_signal_chunked_with_fallback(
+                &y_padded,
+                win,
+                hop_length,
+                &mut spec_batch,
+                n_fft,
+                n_frames,
+            );
+
+            {
+                use ndarray::parallel::prelude::*;
+                out.axis_iter_mut(ndarray::Axis(1))
+                    .into_par_iter()
+                    .enumerate()
+                    .for_each(|(frame_idx, mut col)| {
+                        let frame_off = frame_idx * n_bins;
+                        for (bin, val) in col.iter_mut().enumerate() {
+                            *val = spec_batch[frame_off + bin].conj();
+                        }
+                    });
             }
+
+            TL_STFT_GPU_BATCH_R2C_BUF.with(|cell| {
+                *cell.borrow_mut() = spec_batch;
+            });
+
+            if timing_enabled {
+                eprintln!(
+                    "[iron-librosa][stft_complex] mode=gpu-r2c requested={:?} resolved={:?} n_fft={} n_frames={} work={} total_ms={:.3} gpu_ms={:.3}",
+                    requested_device,
+                    resolved_device,
+                    n_fft,
+                    n_frames,
+                    work_size,
+                    total_start.elapsed().as_secs_f64() * 1000.0,
+                    gpu_start.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
+            return Ok(out.into_pyarray_bound(py));
         }
 
-        // Try batched Metal GPU; fall back to CPU rustfft on any error.
-        let _ = crate::metal_fft::fft_forward_batched_chunked_with_fallback(
-            &mut batch_buf,
-            n_fft,
-            n_frames,
-        );
-
-        for frame_idx in 0..n_frames {
-            let frame_off = frame_idx * n_fft;
-            for (bin, val) in out.index_axis_mut(ndarray::Axis(1), frame_idx).iter_mut().enumerate() {
-                // Conjugate to match NumPy/scipy rfft sign convention.
-                *val = batch_buf[frame_off + bin].conj();
+        let needed = n_frames * n_fft;
+        let mut batch_buf = TL_STFT_GPU_BATCH_BUF.with(|cell| {
+            let mut cached = cell.borrow_mut();
+            let mut buf = std::mem::take(&mut *cached);
+            if buf.len() != needed {
+                buf.resize(needed, Complex::<f32>::default());
             }
+            buf
+        });
+
+        // Parallel batch buffer fill (Rayon) — avoids sequential loop overhead.
+        {
+            use rayon::prelude::*;
+            batch_buf
+                .par_chunks_mut(n_fft)
+                .enumerate()
+                .for_each(|(frame_idx, frame_slice)| {
+                    let start = frame_idx * hop_length;
+                    for k in 0..n_fft {
+                        frame_slice[k] =
+                            Complex::new(y_padded[start + k] * win[k], 0.0);
+                    }
+                });
         }
+
+        // Try backend GPU batched FFT; each backend wrapper falls back to CPU.
+        match resolved_device {
+            RustDevice::AppleGpu => {
+                let _ = crate::metal_fft::fft_forward_batched_chunked_with_fallback(
+                    &mut batch_buf,
+                    n_fft,
+                    n_frames,
+                );
+            }
+            RustDevice::CudaGpu => {
+                let _ = crate::cuda_fft::fft_forward_batched_chunked_with_fallback(
+                    &mut batch_buf,
+                    n_fft,
+                    n_frames,
+                );
+            }
+            _ => {}
+        }
+
+        // Parallel unpack (Rayon).
+        {
+            use ndarray::parallel::prelude::*;
+            out.axis_iter_mut(ndarray::Axis(1))
+                .into_par_iter()
+                .enumerate()
+                .for_each(|(frame_idx, mut col)| {
+                    let frame_off = frame_idx * n_fft;
+                    for (bin, val) in col.iter_mut().enumerate() {
+                        *val = batch_buf[frame_off + bin].conj();
+                    }
+                });
+        }
+
+        TL_STFT_GPU_BATCH_BUF.with(|cell| {
+            *cell.borrow_mut() = batch_buf;
+        });
 
         if timing_enabled {
             eprintln!(
@@ -837,4 +1011,8 @@ pub fn stft_complex_f64_batch<'py>(
 
     Ok(out.into_pyarray_bound(py))
 }
+
+
+
+
 

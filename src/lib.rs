@@ -37,6 +37,7 @@ fn iron_librosa_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(convert::hz_to_mel, m)?)?;
     m.add_function(wrap_pyfunction!(convert::mel_to_hz, m)?)?;
     m.add_function(wrap_pyfunction!(backend::rust_backend_info, m)?)?;
+    m.add_function(wrap_pyfunction!(backend::cuda_diagnostics, m)?)?;
 
     // ----- decompose -----
     // NMF is handled by Python/scikit-learn; no Rust implementation exposed.
@@ -48,6 +49,8 @@ fn iron_librosa_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mel::mel_project_f64, m)?)?;
     m.add_function(wrap_pyfunction!(mel::mel_project_f32, m)?)?;
     m.add_function(wrap_pyfunction!(mel::mel_filter_f32, m)?)?;
+    m.add_function(wrap_pyfunction!(mel::melspectrogram_fused_f32, m)?)?;
+    m.add_function(wrap_pyfunction!(mel::melspectrogram_fused_batch_f32, m)?)?;
 
     // ----- dct -----
     m.add_function(wrap_pyfunction!(dct::dct2_ortho_f32, m)?)?;
